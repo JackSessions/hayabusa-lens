@@ -322,7 +322,7 @@ def export_html(ds: D.Dataset, rows: list[dict], f: dict) -> str:
 h1{{font:800 1.6rem ui-monospace,monospace;background:linear-gradient(90deg,#ff5f6d,#ffb02e,#ffe14a,#4af0a2,#38d6ff,#e04aff);-webkit-background-clip:text;background-clip:text;color:transparent;display:inline-block;margin:0}}
 .m{{color:#7fa7b5;font:12px ui-monospace,monospace}}.tiles{{display:flex;gap:.6rem;margin:1rem 0}}.t{{flex:1;border:1px solid var(--c);border-radius:8px;padding:.5rem;text-align:center}}.t b{{display:block;font-size:1.5rem;color:var(--c)}}.t span{{color:#7fa7b5;font-size:.75rem;text-transform:uppercase}}
 table{{width:100%;border-collapse:collapse}}td,th{{text-align:left;padding:.4rem;border-bottom:1px solid #1c252d;vertical-align:top}}th{{font:11px ui-monospace,monospace;color:#7fa7b5;text-transform:uppercase}}.c{{border:1px solid var(--c);color:var(--c);border-radius:999px;padding:0 .5rem;font:11px ui-monospace,monospace;text-transform:uppercase}}.d{{color:#9fb6bf;font:12px ui-monospace,monospace;word-break:break-all}}
-</style><main><h1>Hayabusa Lens</h1><div class="m">v{__version__} | source: {e(ds.source or "demo")} | {len(rows)} events{' (filtered)' if any(v not in (None, '') for k, v in f.items() if k != 'levels') or f.get('levels') is not None else ''}</div>
+</style><main><h1>Hayabusa Lens</h1><div class="m">v{__version__} | source: {e(ds.source or "results")} | {len(rows)} events{' (filtered)' if any(v not in (None, '') for k, v in f.items() if k != 'levels') or f.get('levels') is not None else ''}</div>
 <div class="tiles">{tiles}</div><table><tr><th>Time (UTC)</th><th>Level</th><th>Rule</th><th>Computer</th><th>EID</th><th>Details</th></tr>{body}</table>{more}
 <p class="m">Created by <a style="color:#38d6ff" href="{__url__}">Jack Sessions</a> | unofficial front end for <a style="color:#38d6ff" href="https://github.com/Yamato-Security/hayabusa">Hayabusa</a> by Yamato Security | MIT licence</p></main></html>"""
 
@@ -454,7 +454,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._guard(urllib.parse.parse_qs(u.query)):
             return
         n = int(self.headers.get("Content-Length") or 0)
-        if n > (MAX_BODY) or u.path not in ("/api/scan", "/api/open", "/api/demo", "/api/update-rules", "/api/rulelib", "/api/localai", "/api/llm/test", "/api/llm/key", "/api/investigate", "/api/explain/evtx", "/api/share", "/api/install", "/api/samples", "/api/tool", "/api/search"):
+        if n > (MAX_BODY) or u.path not in ("/api/scan", "/api/open", "/api/update-rules", "/api/rulelib", "/api/localai", "/api/llm/test", "/api/llm/key", "/api/investigate", "/api/explain/evtx", "/api/share", "/api/install", "/api/samples", "/api/tool", "/api/search"):
             return self._json(404, {"error": "bad request"})
         try:
             body = json.loads(self.rfile.read(n) or b"{}")
@@ -473,16 +473,12 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/share":
             return self._share(body)
         jid, job = _new_job()
-        if u.path == "/api/demo":
-            job["dataset"] = D.Dataset.from_dicts(D.demo_dicts(), "Demo data")
-            job["label"] = "Demo data"
-            job["state"] = "done"
-        elif u.path == "/api/investigate":
+        if u.path == "/api/investigate":
             ident = str(body.get("job", ""))
             src = JOBS.get(ident)
             if not src or src.get("state") != "done" or "dataset" not in src or not src["dataset"].rows:
                 JOBS.pop(jid, None)
-                return self._json(400, {"error": "Load some results first (scan logs, open results, or try the demo)."})
+                return self._json(400, {"error": "Load some results first (scan logs or open a result)."})
             threading.Thread(target=_run_investigate, args=(job, src, body), daemon=True).start()
         elif u.path == "/api/search":
             path = os.path.abspath(os.path.expanduser(str(body.get("path", "")).strip().strip('"')))
@@ -790,13 +786,11 @@ def make_server(port: int = 0) -> tuple[ThreadingHTTPServer, str]:
     return ThreadingHTTPServer(("127.0.0.1", port), type("Bound", (Handler,), {"token": token})), token
 
 
-def serve(port: int = 0, open_browser: bool = True, path: str | None = None, demo: bool = False, samples: bool = False, ai_start: bool = True) -> int:
+def serve(port: int = 0, open_browser: bool = True, path: str | None = None, samples: bool = False, ai_start: bool = True) -> int:
     httpd, token = make_server(port)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/?token={token}"
     if samples:
         url += "&samples=1"
-    elif demo:
-        url += "&demo=1"
     elif path:
         url += "&path=" + urllib.parse.quote(os.path.abspath(path))
     print(f"Hayabusa Lens {__version__} by {__author__}\n  {url}\nListening on this computer only. Press Ctrl+C to stop.", flush=True)

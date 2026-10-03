@@ -21,7 +21,7 @@ from hayabusa_lens import vectorchain as VC
 
 
 def crit_row():
-    rows = D.Dataset.from_dicts(D.demo_dicts(), "d").rows
+    rows = D.Dataset.from_dicts(fixtures.demo_dicts(), "d").rows
     return next(r for r in rows if r["lvl"] == 4 and r["details"].get("SrcIP"))
 
 
@@ -65,7 +65,7 @@ class FormatTests(unittest.TestCase):
         json.dumps(ev)
 
     def test_select_limit_and_level(self):
-        rows = D.Dataset.from_dicts(D.demo_dicts(), "d").rows
+        rows = D.Dataset.from_dicts(fixtures.demo_dicts(), "d").rows
         self.assertTrue(all(r["lvl"] >= 3 for r in SH.select(rows, 3)))
         with mock.patch.object(SH, "MAX_EVENTS", 3):
             with self.assertRaises(SH.ShareError):
@@ -166,7 +166,7 @@ class ShareServerTests(unittest.TestCase):
         cls.httpd, cls.token = server.make_server(0)
         cls.port = cls.httpd.server_address[1]
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
-        cls.job = cls.post("/api/demo", {})[1]["job"]
+        cls.job = fixtures.make_job(server)
 
     @classmethod
     def tearDownClass(cls):
@@ -206,7 +206,7 @@ class ShareServerTests(unittest.TestCase):
         replies = iter([json.dumps({"thought": "t", "action": "overview", "args": {}}), json.dumps({"thought": "t", "action": "finish", "args": {"report": "x" * 200}})])
         with mock.patch.object(server.LLM, "chat", side_effect=lambda *a, **k: next(replies)):
             _, r = self.post("/api/investigate", {"job": self.job, "ai": {"provider": "ollama", "model": "m"}, "steps": 4})
-            for _ in range(100):
+            for _ in range(400):
                 code, s = self.get(f"/api/status?job={r['job']}")
                 if s["state"] != "running":
                     break

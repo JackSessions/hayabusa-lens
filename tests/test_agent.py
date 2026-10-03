@@ -115,7 +115,7 @@ class LLMTests(unittest.TestCase):
 
 class NetmapTests(unittest.TestCase):
     def test_graph(self):
-        g = NM.build(D.Dataset.from_dicts(D.demo_dicts(), "d").rows)
+        g = NM.build(D.Dataset.from_dicts(fixtures.demo_dicts(), "d").rows)
         types = {n["type"] for n in g["nodes"]}
         self.assertEqual(types, {"host", "user", "ip"})
         ext = [n for n in g["nodes"] if n["type"] == "ip" and n["sub"] == "external"]

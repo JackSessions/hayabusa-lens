@@ -24,8 +24,9 @@ Start it: `python3 -m hayabusa_lens` (or `hayabusa-lens`). Tick each line:
 
 | Step | What to do | Expected |
 |---|---|---|
+| 0 | Press **Tutorial** (top bar) and click **Next** through every step | Each step highlights the matching control and switches tab; **Close** or Esc ends it |
 | 1 | Look at the two chips under the tabs | Hayabusa and Chainsaw show a version (green), or a *Download it for me* button |
-| 2 | **Real samples** tab, *Download and scan* | Progress, then about 400 detections, 11 critical |
+| 2 | **Practice logs** tab, *Download and scan* | Progress, then about 400 detections, 11 critical |
 | 3 | Click the red CRITICAL tile | Table narrows to critical only; click again to restore |
 | 4 | Drag across a timeline bar | A *time range* chip appears; the table and lists narrow; the chip's x zooms back out |
 | 5 | Click a MITRE tactic on the right | Table filters to it; click again to clear |

@@ -1,8 +1,11 @@
+import sys
 import json
 import os
 import tempfile
 import unittest
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fixtures  # noqa: E402
 from hayabusa_lens import data as D
 
 ROWS = [
@@ -81,7 +84,7 @@ class DataTests(unittest.TestCase):
         self.assertIsNone(D.mitre_url("sysmon"))
 
     def test_demo_data_is_deterministic_and_clearly_made_up(self):
-        a, b = D.demo_dicts(), D.demo_dicts()
+        a, b = fixtures.demo_dicts(), fixtures.demo_dicts()
         self.assertEqual([x["RuleID"] for x in a], [x["RuleID"] for x in b])
         self.assertTrue(all(x["RuleID"].startswith("demo-") and x["Computer"].startswith("DEMO-") for x in a))
 

@@ -225,39 +225,3 @@ def mitre_url(tag: str) -> str | None:
     if not m:
         return None
     return f"https://attack.mitre.org/techniques/T{m.group(1)}/" + (f"{m.group(2)}/" if m.group(2) else "")
-
-
-def _demo_details(rnd, ipr, host: str, title: str) -> dict:
-    d = {"Cmdline": f"demo-command-{rnd.randint(1, 40)}.exe", "User": f"{host}\\demo.user"}
-    if title in ("Failed Logon Burst", "Suspicious PowerShell Download Cradle"):
-        d["SrcIP"] = f"203.0.113.{ipr.choice([7, 7, 7, 44])}"                     # fictional outside address
-    elif title in ("Admin Share Access From Workstation", "Net Conn", "Mimikatz-Like LSASS Access"):
-        d["SrcIP"] = f"10.0.0.{ipr.choice([21, 22])}"
-        d["TargetUser"] = ipr.choice(["svc.backup", "demo.admin"])
-    return d
-
-
-def demo_dicts() -> list[dict]:
-    """Made-up sample detections so the interface can be tried without Hayabusa or any logs."""
-    import random
-    rnd = random.Random(7)
-    base = datetime(2026, 3, 14, 8, 0, 0, tzinfo=timezone.utc)
-    hosts = ["DEMO-WS01", "DEMO-WS02", "DEMO-SRV01", "DEMO-DC01"]
-    rules = [
-        ("Proc Exec", "info", "Sysmon", 1, [], [], 70), ("Net Conn", "info", "Sysmon", 3, [], [], 50),
-        ("Whoami Execution", "low", "Sysmon", 1, ["Disc"], ["T1033"], 14), ("Scheduled Task Created", "med", "Security", 4698, ["Persis", "Exec"], ["T1053.005"], 9),
-        ("Suspicious PowerShell Download Cradle", "high", "PowerShell", 4104, ["Exec"], ["T1059.001"], 7), ("Failed Logon Burst", "med", "Security", 4625, ["CredAccess"], ["T1110"], 11),
-        ("Admin Share Access From Workstation", "high", "Security", 5140, ["LatMov"], ["T1021.002"], 5), ("Security Log Cleared", "crit", "Security", 1102, ["Stealth"], ["T1070.001"], 2),
-        ("Mimikatz-Like LSASS Access", "crit", "Sysmon", 10, ["CredAccess"], ["T1003.001"], 2), ("New Service Installed", "med", "System", 7045, ["Persis", "PrivEsc"], ["T1543.003"], 6),
-    ]
-    out = []
-    ipr = random.Random(11)
-    for title, level, chan, eid, tactics, tags, weight in rules:
-        for _ in range(weight * 3):
-            t = base + timedelta(minutes=rnd.randint(0, 600), seconds=rnd.randint(0, 59))
-            host = rnd.choice(hosts[:2] if level in ("info", "low") else hosts)
-            out.append({"Timestamp": t.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z", "RuleTitle": title, "Level": level, "Computer": host, "Channel": chan, "EventID": eid,
-                        "MitreTactics": tactics, "MitreTags": tags, "OtherTags": [], "RecordID": rnd.randint(1000, 99999),
-                        "Details": _demo_details(rnd, ipr, host, title),
-                        "ExtraFieldInfo": {}, "RuleFile": title.lower().replace(" ", "_") + ".yml", "RuleID": f"demo-{__import__("zlib").crc32(title.encode()) % 10**8:08d}", "EvtxFile": "demo/Security.evtx"})
-    return out

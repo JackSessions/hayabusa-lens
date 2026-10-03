@@ -1,4 +1,4 @@
-include README.md LICENSE* CITATION.cff
+include README.md LICENSE* CITATION.cff CHANGELOG.md SECURITY.md CONTRIBUTING.md
 recursive-include tests *.py
 recursive-include docs *.png
 recursive-include hayabusa_lens/starter *.yml

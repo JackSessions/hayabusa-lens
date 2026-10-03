@@ -9,6 +9,8 @@ import unittest
 import urllib.error
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fixtures  # noqa: E402
 from hayabusa_lens import data as D
 from hayabusa_lens import runner as R
 from hayabusa_lens import server
@@ -88,9 +90,8 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.call("/", host="evil.example.com")[0], 403)
         self.assertEqual(self.call(f"/?token={self.token}")[0], 200)
 
-    def test_demo_query_filter_event_and_export(self):
-        _, raw = self.call("/api/demo", {})
-        job = json.loads(raw)["job"]
+    def test_query_filter_event_and_export(self):
+        job = fixtures.make_job(server)
         self.assertEqual(self.finish(job)["state"], "done")
         _, raw = self.call(f"/api/query?job={job}&levels=3,4&sort=level&limit=5")
         q = json.loads(raw)

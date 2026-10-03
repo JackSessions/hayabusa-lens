@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0
+- **Tutorial.** A guided two-minute tour (top-bar button, home-screen card, opens on the first visit) that highlights the real controls: engine, logs, dashboard, AI helper, investigation and audit trail, map, share.
+- **No bundled sample data.** Removed the built-in demo alerts, `--demo`, the demo buttons and the sample-data pill. The tab is now **Practice logs**, which downloads 14 public attack-simulation logs only when you ask.
+- **PyPI-ready.** New README ("why use this", tutorial, install, commands) with absolute image links so it renders on PyPI, richer package metadata, `SECURITY.md`, `CONTRIBUTING.md`, issue templates and `docs/RELEASING.md`.
+- Tests no longer depend on product code for sample rows (they use test fixtures).
+
+
 ## 0.8.0
 - **AI audit trail.** Every question put to the AI and every answer, the tool it chose and what it returned, live on the dashboard, with full prompts on click and Markdown/JSON export. It can also be sent to a SIEM (`hayabusa-lens.ai_audit` events).
 - **AI works on your EVTX, not on agent prompts.** Removed the agent-log analysis, the Claude Code / Codex log discovery and `--agent`. The AI path tab now draws the investigation's own steps in 3D.

@@ -35,7 +35,7 @@ def main(argv=None) -> int:
                 "  hayabusa-lens --get-rules                   fill the rule library with the newest SigmaHQ rules\n"
                 "  hayabusa-lens --install-hayabusa            download Hayabusa for this computer (and --install-chainsaw)\n"
                 "  hayabusa-lens --no-ai-start                 do not start Ollama automatically\n"
-                "  hayabusa-lens --demo                        explore built-in sample alerts (no Hayabusa needed)\n\n"
+                "  hayabusa-lens --port 8080 --no-browser      pick a port and print the address instead of opening a browser\n\n"
                 "AI helper (optional): install Ollama (free, private) or log in to Claude Code, or set OPENAI_API_KEY /\n"
                 "ANTHROPIC_API_KEY, then open the AI button in the app. Nothing leaves this computer unless you choose an\n"
                 "online service and tick the consent box.\n\n"
@@ -52,7 +52,6 @@ def main(argv=None) -> int:
     ap.add_argument("--offline", action="store_true", help="with --get-rules: do not use the internet (cached download, else the built-in starter rules)")
     ap.add_argument("--samples", action="store_true", help="download a few real sample logs and scan them (the quickest way to see it working)")
     ap.add_argument("--no-ai-start", action="store_true", help="do not start Ollama automatically (default: start it if installed, and stop it again on exit)")
-    ap.add_argument("--demo", action="store_true", help="load built-in sample alerts (works offline, no Hayabusa needed)")
     ap.add_argument("--port", type=int, default=0, metavar="N", help="port to listen on (default: a free one)")
     ap.add_argument("--no-browser", action="store_true", help="print the address instead of opening a browser")
     ap.add_argument("--install-hayabusa", action="store_true", help="download the official Hayabusa for this computer into ~/.hayabusa-lens, then exit")
@@ -89,7 +88,7 @@ def main(argv=None) -> int:
         return 0
     server.STATE["hayabusa"] = a.hayabusa
     server.STATE["chainsaw"] = a.chainsaw
-    return server.serve(a.port, not a.no_browser, a.path, a.demo, a.samples, not a.no_ai_start)
+    return server.serve(a.port, not a.no_browser, a.path, a.samples, not a.no_ai_start)
 
 
 if __name__ == "__main__":

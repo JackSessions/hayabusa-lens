@@ -12,6 +12,8 @@ import io
 import zipfile
 import hashlib
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fixtures  # noqa: E402
 from hayabusa_lens import chainsaw as CS
 from hayabusa_lens import compare as CP
 from hayabusa_lens import data as D
@@ -205,7 +207,7 @@ class ChainsawEngineTests(unittest.TestCase):
                 self.assertIn("EventID: 1102", rule["text"])
                 self.assertEqual(list(rule["techniques"]), ["T1070.001"])
                 self.assertIn("audit_cleared.yml", {r["file"] for r in call("/api/rules?q=audit")["rules"]})
-                jb = call("/api/demo", {})["job"]
+                jb = fixtures.make_job(server)
                 finish(jb)
                 jobs = call("/api/jobs")["jobs"]
                 self.assertEqual(len(jobs), 2)
@@ -223,7 +225,7 @@ class HelpTests(unittest.TestCase):
     def test_help_has_every_section_and_covers_each_tab(self):
         for sec in ("start", "dash", "tabs", "recipes", "ref", "fix", "about"):
             self.assertIn(f'data-h="{sec}"', PAGE)
-        for topic in ("Scan logs", "Open results", "Summaries", "Search events", "Rules", "Compare", "AI audit trail", "Network map 3D", "The AI helper", "Investigate with AI", "Back and home", "Share", "Real samples", "4624", "Credential dumping"):
+        for topic in ("Scan logs", "Open results", "Summaries", "Search events", "Rules", "Compare", "AI audit trail", "Network map 3D", "The AI helper", "Investigate with AI", "Back and home", "Share", "Practice logs", "4624", "Credential dumping"):
             self.assertIn(topic, PAGE, f"help should mention {topic}")
 
 

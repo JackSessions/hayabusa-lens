@@ -9,6 +9,7 @@ import urllib.request
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fixtures  # noqa: E402
 from hayabusa_lens import attackchain as AC  # noqa: E402
 from hayabusa_lens import data as D  # noqa: E402
 from hayabusa_lens import investigate as INV  # noqa: E402
@@ -17,7 +18,7 @@ from hayabusa_lens import server  # noqa: E402
 
 
 def rows():
-    return [dict(r, i=i) for i, r in enumerate(D.Dataset.from_dicts(D.demo_dicts(), "d").rows)]
+    return [dict(r, i=i) for i, r in enumerate(D.Dataset.from_dicts(fixtures.demo_dicts(), "d").rows)]
 
 
 def scripted(*replies):
@@ -124,7 +125,7 @@ class ServerTests(unittest.TestCase):
         cls.httpd, cls.token = server.make_server(0)
         cls.port = cls.httpd.server_address[1]
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
-        cls.job = cls.post("/api/demo", {})[1]["job"]
+        cls.job = fixtures.make_job(server)
 
     @classmethod
     def tearDownClass(cls):
@@ -143,7 +144,7 @@ class ServerTests(unittest.TestCase):
     post = req
 
     def wait(self, jid):
-        for _ in range(100):
+        for _ in range(400):
             code, s = self.req(f"/api/status?job={jid}")
             if s["state"] != "running":
                 return s
@@ -265,6 +266,19 @@ class CLITests(unittest.TestCase):
         self.assertNotIn("--agent", text)
         self.assertNotIn("fictional", text)
 
+    def test_the_product_ships_no_sample_data(self):
+        from hayabusa_lens import cli
+        self.assertFalse(hasattr(D, "demo_dicts"))
+        import contextlib
+        import io
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            cli.main(["--demo"])
+        self.assertNotEqual(cm.exception.code, 0)
+        from hayabusa_lens.page import PAGE
+        for gone in ("/api/demo", "nmdemo", "h-demo", "sample alerts"):
+            self.assertNotIn(gone, PAGE)
+        self.assertIn('id="tutbtn"', PAGE)
+
     def test_ai_autostart_follows_the_flag(self):
         import contextlib
         import io
@@ -274,12 +288,12 @@ class CLITests(unittest.TestCase):
             httpd.serve_forever.side_effect = KeyboardInterrupt
             mk.return_value = (httpd, "tok")
             with contextlib.redirect_stdout(io.StringIO()):
-                server.serve(0, False, None, False, False, True)
+                server.serve(0, False, None, False, True)
             time.sleep(0.2)
             auto.assert_called()
             auto.reset_mock()
             with contextlib.redirect_stdout(io.StringIO()):
-                server.serve(0, False, None, False, False, False)
+                server.serve(0, False, None, False, False)
             time.sleep(0.2)
             auto.assert_not_called()
 

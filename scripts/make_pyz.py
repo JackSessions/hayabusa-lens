@@ -1,5 +1,5 @@
 """Builds dist/hayabusa-lens.pyz: ONE file that runs on Windows, macOS and Linux with just Python 3.9+.
-Usage: python scripts/make_pyz.py   then   python dist/hayabusa-lens.pyz --demo"""
+Usage: python scripts/make_pyz.py   then   python dist/hayabusa-lens.pyz --version"""
 import os
 import shutil
 import tempfile
