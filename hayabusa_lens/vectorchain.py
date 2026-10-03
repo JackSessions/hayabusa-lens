@@ -132,28 +132,6 @@ def _role_kind(role: str) -> str:
     return "other"
 
 
-def find_traces(limit: int = 25) -> list[dict]:
-    """Agent logs already on this computer (Claude Code, Codex, or anything saved in ~/.hayabusa-lens/traces)."""
-    import glob
-    import os
-    home = os.path.expanduser("~")
-    spots = [("Claude Code", os.path.join(home, ".claude", "projects", "*", "*.jsonl")),
-             ("Codex", os.path.join(home, ".codex", "sessions", "**", "*.jsonl")),
-             ("Saved", os.path.join(home, ".hayabusa-lens", "traces", "*.jsonl"))]
-    found = []
-    for tool, pat in spots:
-        for f in glob.glob(pat, recursive=True):
-            try:
-                st = os.stat(f)
-            except OSError:
-                continue
-            if st.st_size < 200:
-                continue
-            proj = os.path.basename(os.path.dirname(f)).strip("-").replace("-", "/") if tool == "Claude Code" else ""
-            found.append({"path": f, "tool": tool, "name": os.path.basename(f), "project": proj, "size": st.st_size, "mtime": int(st.st_mtime)})
-    return sorted(found, key=lambda x: -x["mtime"])[:limit]
-
-
 def parse_trace(text: str) -> list[dict]:
     text = text.strip().lstrip("﻿")
     if not text:

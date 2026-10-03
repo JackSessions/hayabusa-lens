@@ -25,14 +25,13 @@ def main(argv=None) -> int:
         prog="hayabusa-lens", add_help=False, formatter_class=argparse.RawDescriptionHelpFormatter,
         description=("Hayabusa Lens: find what happened in Windows event logs, fast.\n"
                      "Scan .evtx files with Hayabusa or Chainsaw, explore the alerts as a dashboard and a 3D map, let an AI helper\n"
-                     "(a local model, Claude, or OpenAI) investigate the attack chain in plain English, check AI-agent logs for\n"
-                     "hijacking, and share findings with a SIEM. Everything runs in your browser, on this computer."),
+                     "(a local model, Claude, or OpenAI) investigate the attack chain in plain English, keep an audit trail of every question it asks\n"
+                     "and every answer it gets, and share findings with a SIEM. Everything runs in your browser, on this computer."),
         epilog=("examples:\n"
                 "  hayabusa-lens                               open the app (Hayabusa is found automatically; Ollama is started if installed)\n"
                 "  hayabusa-lens /cases/host1/Logs             scan a folder of .evtx files straight away\n"
                 "  hayabusa-lens results.csv                   open an existing Hayabusa CSV / JSONL timeline\n"
                 "  hayabusa-lens --samples                     download a few REAL attack-simulation logs and scan them\n"
-                "  hayabusa-lens --agent session.jsonl         analyse an AI-agent log (e.g. a Claude Code session) in 3D\n"
                 "  hayabusa-lens --get-rules                   fill the rule library with the newest SigmaHQ rules\n"
                 "  hayabusa-lens --install-hayabusa            download Hayabusa for this computer (and --install-chainsaw)\n"
                 "  hayabusa-lens --no-ai-start                 do not start Ollama automatically\n"
@@ -52,7 +51,6 @@ def main(argv=None) -> int:
     ap.add_argument("--get-rules", nargs="?", const="core", metavar="SET", help="fill ~/.hayabusa-lens/rules with SigmaHQ rules (core, core+, core++, all, emerging; default core), then exit")
     ap.add_argument("--offline", action="store_true", help="with --get-rules: do not use the internet (cached download, else the built-in starter rules)")
     ap.add_argument("--samples", action="store_true", help="download a few real sample logs and scan them (the quickest way to see it working)")
-    ap.add_argument("--agent", metavar="TRACE", help="open the Agent chain tab on an agent log (.jsonl), e.g. a Claude Code session")
     ap.add_argument("--no-ai-start", action="store_true", help="do not start Ollama automatically (default: start it if installed, and stop it again on exit)")
     ap.add_argument("--demo", action="store_true", help="load built-in sample alerts (works offline, no Hayabusa needed)")
     ap.add_argument("--port", type=int, default=0, metavar="N", help="port to listen on (default: a free one)")
@@ -91,7 +89,7 @@ def main(argv=None) -> int:
         return 0
     server.STATE["hayabusa"] = a.hayabusa
     server.STATE["chainsaw"] = a.chainsaw
-    return server.serve(a.port, not a.no_browser, a.path, a.demo, a.samples, a.agent, not a.no_ai_start)
+    return server.serve(a.port, not a.no_browser, a.path, a.demo, a.samples, not a.no_ai_start)
 
 
 if __name__ == "__main__":

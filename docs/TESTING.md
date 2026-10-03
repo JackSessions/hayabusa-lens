@@ -42,10 +42,11 @@ Start it: `python3 -m hayabusa_lens` (or `hayabusa-lens`). Tick each line:
 | 16 | `python3 -m hayabusa_lens --help` | Banner and every option, including `--agent` and `--no-ai-start` |
 | 17 | Press **AI** at the top | A box with status chips and Auto / Ollama / Claude / OpenAI. *What is happening* shows Ollama starting (if installed) |
 | 18 | Choose a helper, press **Test connection** | A tick and a time, or a plain-English reason it failed. Online choices ask for the consent tick first |
-| 19 | With results loaded, press **Investigate with AI** (results header) | A progress bar with each step, then the Agent chain 3D view and a *What the AI found* report |
+| 19 | With results loaded, press **Investigate with AI** (results header) | The AI path tab with a live audit trail, then a *What the AI found* report |
 | 20 | **Network map**, then **Explain the attack chain** | An attack-stage list on the right, then a plain-English explanation. Click a node: *Explain this* / *Investigate* |
-| 21 | **Agent chain**, pick a log from the list | A 3D chain of the steps; flagged steps are red/orange |
-| 22 | **Share**, *Preview*, then *Send* to a file without ticking the box | Refused until you tick the confirmation; with it, an NDJSON file appears |
+| 21 | On the dashboard press **Investigate** (or tick *run automatically*) | The audit trail fills in live: question, AI answered, tool, result. Click a step for the full question. *Audit (Markdown)* downloads it |
+| 22 | **AI path** tab, then **Network map** | The investigation drawn in 3D; the map shows numbered attack paths. **←** goes back, the shield goes home with a DFIR field note |
+| 23 | **Share**, choose *AI audit trail*, *Preview*, then *Send* to a file without ticking the box | Refused until you tick the confirmation; with it, an NDJSON file appears |
 
 ## 3. Things that should fail politely
 

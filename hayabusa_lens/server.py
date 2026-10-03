@@ -110,7 +110,15 @@ def _run_investigate(job: dict, src: dict, body: dict) -> None:
             job["log"].append(f"{turn}. {msg}")
 
         job["phase"] = "Starting the investigation"
-        res = INV.investigate(ds.rows, ask, str(body.get("focus", "")), steps_n, progress)
+        job["audit"] = []
+        ai_label = c["provider"] + (" · " + c["model"] if c["model"] else "")
+
+        def on_audit(e: dict) -> None:
+            e["ai"] = ai_label
+
+        res = INV.investigate(ds.rows, ask, str(body.get("focus", "")), steps_n, progress, job["audit"], on_audit)
+        for e in job["audit"]:
+            e.setdefault("ai", ai_label)
         emb = body.get("embed") if isinstance(body.get("embed"), dict) else {}
         if str(emb.get("provider", "local")) == "local":
             vecs, mode = None, "local"
@@ -119,12 +127,14 @@ def _run_investigate(job: dict, src: dict, body: dict) -> None:
             job["phase"] = "Placing the steps in 3D"
             vecs, mode = VC.from_dense(LLM.embed(e["provider"], [s["text"] for s in res["steps"]], e["key"], e["base"], e["model"])), f"{e['provider']} vectors"
         an = VC.analyze(res["steps"], vecs, mode)
+        an["audit"] = job["audit"]
         tid = secrets.token_hex(6)
         if len(TRACES) > 8:
             TRACES.pop(next(iter(TRACES)))
         TRACES[tid] = an
         label = "AI investigation of " + str(src.get("label") or ds.source or "results")
-        job["agent"] = dict(an, id=tid, label=label, report=res["report"], investigated=True, ai=f"{c['provider']}{' · ' + c['model'] if c['model'] else ''}", truncated=False)
+        job["agent"] = dict(an, id=tid, label=label, report=res["report"], investigated=True, ai=ai_label, truncated=False)
+        an["label"], an["report"], an["ai"] = label, res["report"], ai_label
         job["state"] = "done"
     except (LLM.LLMError, VC.TraceError) as e:
         job.update(state="error", error=str(e))
@@ -379,8 +389,10 @@ class Handler(BaseHTTPRequestHandler):
             out = {"state": job["state"], "progress": job.get("progress", 0), "phase": job.get("phase", ""), "log": job["log"][-6:], "error": job.get("error", ""), "elapsed": round(time.time() - job["t0"], 1)}
             if job.get("notice"):
                 out["notice"] = job["notice"]
+            if "audit" in job:
+                out["audit"] = [{k: v for k, v in e.items() if k != "prompt"} for e in job["audit"]]
             if job["state"] == "done" and "agent" in job:
-                out["agent"] = job["agent"]
+                out["agent"] = dict(job["agent"], audit=[{k: v for k, v in e.items() if k != "prompt"} for e in job["agent"].get("audit", [])])
             elif job["state"] == "done" and "tables" in job:
                 out["tables"] = job["tables"]
             elif job["state"] == "done":
@@ -410,14 +422,16 @@ class Handler(BaseHTTPRequestHandler):
             ds = self._dataset(q)
             if ds is not None:
                 self._json(200, NM.build(ds.rows))
-        elif p == "/api/traces":
-            self._json(200, {"traces": VC.find_traces()})
+        elif p == "/api/audit":
+            self._audit(q)
+        elif p == "/api/audit/download":
+            self._audit_download(q)
         elif p == "/api/llm/activity":
             self._json(200, {"events": LLM.activity(float((q.get("since") or ["0"])[0] or 0))[-14:], "now": time.time()})
         elif p == "/api/chain":
             ds = self._dataset(q)
             if ds is not None:
-                self._json(200, {"stages": AC.stages(ds.rows, 1), "total": len(ds.rows)})
+                self._json(200, {"stages": AC.stages(ds.rows, 1), "paths": AC.paths(ds.rows, 1), "total": len(ds.rows)})
         elif p == "/api/localai":
             self._json(200, LLM.local_status())
         elif p == "/api/llm":
@@ -440,14 +454,12 @@ class Handler(BaseHTTPRequestHandler):
         if not self._guard(urllib.parse.parse_qs(u.query)):
             return
         n = int(self.headers.get("Content-Length") or 0)
-        if n > (MAX_UPLOAD if u.path == "/api/agent" else MAX_BODY) or u.path not in ("/api/scan", "/api/open", "/api/demo", "/api/update-rules", "/api/rulelib", "/api/localai", "/api/agent", "/api/agent/explain", "/api/llm/test", "/api/llm/key", "/api/investigate", "/api/explain/evtx", "/api/share", "/api/install", "/api/samples", "/api/tool", "/api/search"):
+        if n > (MAX_BODY) or u.path not in ("/api/scan", "/api/open", "/api/demo", "/api/update-rules", "/api/rulelib", "/api/localai", "/api/llm/test", "/api/llm/key", "/api/investigate", "/api/explain/evtx", "/api/share", "/api/install", "/api/samples", "/api/tool", "/api/search"):
             return self._json(404, {"error": "bad request"})
         try:
             body = json.loads(self.rfile.read(n) or b"{}")
         except ValueError:
             return self._json(400, {"error": "bad JSON"})
-        if u.path in ("/api/agent", "/api/agent/explain"):
-            return self._agent(u.path, body)
         if u.path == "/api/llm/test":
             return self._llm_test(body)
         if u.path == "/api/llm/key":
@@ -535,10 +547,15 @@ class Handler(BaseHTTPRequestHandler):
                 if not info.get("found"):
                     return job.update(state="error", error="Hayabusa was not found.")
                 job["phase"] = "updating rules (needs internet)"
+                before = rule_index().summary()["unique"]
                 code = R.update_rules(info, job["log"])
                 RI.invalidate()
-                job.update(state="error" if code else "done", error="update-rules failed: " + " | ".join(job["log"][-2:]) if code else "")
+                after = rule_index().summary()["unique"]
+                if code:
+                    return job.update(state="error", error="Updating the rules failed: " + " | ".join(job["log"][-2:]))
+                job["notice"] = f"Rules updated. {after:,} unique rules on this computer" + (f" ({after - before:+,} since before)." if after != before else " (already up to date).")
                 job["dataset"] = D.Dataset([], "rules updated")
+                job["state"] = "done"
             threading.Thread(target=upd, daemon=True).start()
         else:
             path = str(body.get("path", "")).strip().strip('"')
@@ -589,7 +606,7 @@ class Handler(BaseHTTPRequestHandler):
     def _rules(self, q: dict) -> None:
         ix = rule_index()
         res = ix.search((q.get("q") or [""])[0][:100], 80)
-        self._json(200, {"total": len(ix.entries), "rules": res})
+        self._json(200, {"total": ix.summary()["unique"], "summary": ix.summary(), "rules": res})
 
     def _rulefile(self, q: dict) -> None:
         ix = rule_index()
@@ -630,11 +647,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": False, "error": str(e)})
 
     def _share_events(self, src: str, ident: str, min_level: int) -> tuple[list[dict], str]:
-        if src == "agent":
+        if src == "audit":
             t = TRACES.get(ident)
             if not t:
-                raise SH.ShareError("That agent analysis is no longer loaded. Run it again.")
-            return SH.agent_events(t, max(min_level, 0)), "agent"
+                raise SH.ShareError("That AI investigation is no longer loaded. Run it again.")
+            return SH.audit_events(t), "audit"
         job = JOBS.get(ident)
         if not job or job.get("state") != "done" or "dataset" not in job:
             raise SH.ShareError("Those results are no longer loaded. Run the scan again or open the file.")
@@ -682,53 +699,35 @@ class Handler(BaseHTTPRequestHandler):
             data, name, ctype = "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events), f"hayabusa-lens-{kind}.ndjson", "application/x-ndjson"
         self._send(200, data.encode("utf-8"), ctype, {"Content-Disposition": f'attachment; filename="{name}"'})
 
-    def _agent(self, path: str, body: dict) -> None:
-        """Agent-trace analysis runs inside the request: local vectors take well under a second."""
-        def conn(spec) -> dict | None:
-            spec = spec if isinstance(spec, dict) else {}
-            prov = str(spec.get("provider", "local"))
-            if prov == "local":
-                return None
-            if spec.get("consent") is not True and not LLM.is_local(prov, str(spec.get("base", ""))):
-                raise LLM.LLMError("Tick the box to confirm you are happy for this trace text to be sent to that service.")
-            return {"provider": prov, "key": str(spec.get("key", "")), "base": str(spec.get("base", "")), "model": str(spec.get("model", ""))}
-        try:
-            if path == "/api/agent/explain":
-                t = TRACES.get(str(body.get("id", "")))
-                if not t:
-                    return self._json(404, {"error": "That analysis is no longer loaded. Run it again."})
-                c = conn(body)
-                if not c:
-                    return self._json(400, {"error": "Choose Claude, OpenAI or a compatible service to explain with."})
-                return self._json(200, {"text": LLM.explain(c["provider"], t["steps"], c["key"], c["base"], c["model"])})
-            if isinstance(body.get("text"), str) and body["text"].strip():
-                text, label = body["text"], str(body.get("name") or "Pasted trace")[:80]
-            else:
-                fp = os.path.abspath(os.path.expanduser(str(body.get("path", "")).strip().strip('"')))
-                if not os.path.isfile(fp):
-                    return self._json(400, {"error": "Pick a trace from the list, choose a file, drop one on the page, or try the demo trace."})
-                if os.path.getsize(fp) > 50 << 20:
-                    return self._json(400, {"error": "That file is over 50 MB. Trim the trace first."})
-                with open(fp, encoding="utf-8", errors="replace") as f:
-                    text, label = f.read(), os.path.basename(fp)
-            steps = VC.parse_trace(text)
-            c = conn(body.get("embed"))
-            if c:
-                vecs, mode = VC.from_dense(LLM.embed(c["provider"], [s["text"] for s in steps], c["key"], c["base"], c["model"])), f"{c['provider']} embeddings"
-            else:
-                vecs, mode = None, "local"
-            res = VC.analyze(steps, vecs, mode)
-        except (VC.TraceError, LLM.LLMError) as e:
-            return self._json(400, {"error": str(e)})
-        except OSError as e:
-            return self._json(400, {"error": f"Could not read that file: {e.strerror or e}"})
-        tid = secrets.token_hex(6)
-        if len(TRACES) > 8:
-            TRACES.pop(next(iter(TRACES)))
-        TRACES[tid] = res
-        res = dict(res, id=tid, label=label, truncated=res["n"] >= VC.MAX_STEPS)
-        res["steps"] = [dict(s, text=s["text"][:1500]) for s in res["steps"]]
-        self._json(200, res)
+    def _audit_for(self, q: dict) -> dict | None:
+        ident = (q.get("id") or q.get("job") or [""])[0]
+        t = TRACES.get(ident)
+        if t:
+            return {"audit": t.get("audit", []), "label": t.get("label", ""), "report": t.get("report", ""), "ai": t.get("ai", "")}
+        j = JOBS.get(ident)
+        if j and "audit" in j:
+            return {"audit": list(j["audit"]), "label": "AI investigation (running)", "report": "", "ai": ""}
+        return None
+
+    def _audit(self, q: dict) -> None:
+        a = self._audit_for(q)
+        self._json(200, a) if a else self._json(404, {"error": "No AI investigation with that id."})
+
+    def _audit_download(self, q: dict) -> None:
+        a = self._audit_for(q)
+        if not a:
+            return self._json(404, {"error": "No AI investigation with that id."})
+        if (q.get("fmt") or ["md"])[0] == "json":
+            return self._send(200, json.dumps(a, indent=1, ensure_ascii=False).encode("utf-8"), "application/json", {"Content-Disposition": 'attachment; filename="hayabusa-lens-ai-audit.json"'})
+        lines = [f"# AI investigation audit trail", "", f"- Source: {a['label']}", f"- AI helper: {a['ai'] or 'unknown'}", f"- Made by Hayabusa Lens {__version__} on {time.strftime('%Y-%m-%d %H:%M:%S')}", "- Every question put to the AI and every answer that came back is listed below, with the tool it chose and what that tool returned.", ""]
+        for e in a["audit"]:
+            lines += [f"## {e['n']}. {e['question']}", f"*{time.strftime('%H:%M:%S', time.localtime(e['t']))} · {e['ms'] / 1000:.1f} s · {e.get('ai', '')}*", "",
+                      "**Question sent to the AI**", "", "```", e.get("prompt", "(not stored)"), "```", "", "**AI answered**", "", "```", e.get("answer", ""), "```", ""]
+            if e.get("action"):
+                lines += [f"**Tool chosen:** `{e['action']} {e.get('args', '')}`", "", "**Tool returned**", "", "```", e.get("result", ""), "```", ""]
+        if a["report"]:
+            lines += ["## Final report", "", a["report"], ""]
+        self._send(200, "\n".join(lines).encode("utf-8"), "text/markdown; charset=utf-8", {"Content-Disposition": 'attachment; filename="hayabusa-lens-ai-audit.md"'})
 
     def _compare(self, q: dict) -> None:
         ja, jb = JOBS.get((q.get("a") or [""])[0]), JOBS.get((q.get("b") or [""])[0])
@@ -791,15 +790,13 @@ def make_server(port: int = 0) -> tuple[ThreadingHTTPServer, str]:
     return ThreadingHTTPServer(("127.0.0.1", port), type("Bound", (Handler,), {"token": token})), token
 
 
-def serve(port: int = 0, open_browser: bool = True, path: str | None = None, demo: bool = False, samples: bool = False, agent: str | None = None, ai_start: bool = True) -> int:
+def serve(port: int = 0, open_browser: bool = True, path: str | None = None, demo: bool = False, samples: bool = False, ai_start: bool = True) -> int:
     httpd, token = make_server(port)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/?token={token}"
     if samples:
         url += "&samples=1"
     elif demo:
         url += "&demo=1"
-    elif agent:
-        url += "&agentpath=" + urllib.parse.quote(os.path.abspath(agent))
     elif path:
         url += "&path=" + urllib.parse.quote(os.path.abspath(path))
     print(f"Hayabusa Lens {__version__} by {__author__}\n  {url}\nListening on this computer only. Press Ctrl+C to stop.", flush=True)

@@ -223,7 +223,7 @@ class HelpTests(unittest.TestCase):
     def test_help_has_every_section_and_covers_each_tab(self):
         for sec in ("start", "dash", "tabs", "recipes", "ref", "fix", "about"):
             self.assertIn(f'data-h="{sec}"', PAGE)
-        for topic in ("Scan logs", "Open results", "Summaries", "Search events", "Rules", "Compare", "Agent chain 3D", "Network map 3D", "The AI helper", "Investigate with AI", "Share", "Real samples", "4624", "Credential dumping"):
+        for topic in ("Scan logs", "Open results", "Summaries", "Search events", "Rules", "Compare", "AI audit trail", "Network map 3D", "The AI helper", "Investigate with AI", "Back and home", "Share", "Real samples", "4624", "Credential dumping"):
             self.assertIn(topic, PAGE, f"help should mention {topic}")
 
 
@@ -232,7 +232,7 @@ class UITests(unittest.TestCase):
         for t in ("scan", "open", "tools", "search", "rules", "compare", "net", "agent", "share", "demo"):
             self.assertIn(f'data-t="{t}"', PAGE)
             self.assertIn(f'id="p-{t}"', PAGE)
-        for i in ("hero", "aimodal", "aibtn", "aiseg", "aikeyset", "aitest", "aihint", "aifeed", "toast", "inv", "aexp", "nexplain", "shprev", "shsend", "shconfirm", "shdl1", "shdl2"):
+        for i in ("hero", "quote", "backbtn", "aud", "audlist", "audgo", "autoinv", "aimodal", "aibtn", "aiseg", "aikeyset", "aitest", "aihint", "aifeed", "toast", "inv", "nexplain", "npath", "shprev", "shsend", "shconfirm", "shdl1", "shdl2"):
             self.assertIn(f'id="{i}"', PAGE)
         self.assertIn("claude-code", PAGE)
         self.assertEqual(PAGE.count("<script>"), PAGE.count("</script>"))

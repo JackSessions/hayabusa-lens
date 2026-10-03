@@ -54,11 +54,15 @@ class FormatTests(unittest.TestCase):
         self.assertIn("msg=x\\=y z", line)
         self.assertEqual(line.count("\n"), 0)
 
-    def test_agent_events_only_flagged(self):
-        a = VC.analyze(VC.parse_trace(fixtures.demo_trace()))
-        ev = SH.agent_events(a)
-        self.assertEqual(len(ev), a["flagged"])
-        self.assertTrue(all(e["event"]["dataset"] == "hayabusa-lens.agent" for e in ev))
+    def test_audit_events_one_per_question(self):
+        a = {"label": "AI investigation of x", "audit": [{"n": 1, "t": 1700000000.5, "ms": 1200, "kind": "turn", "question": "Where should I start?", "answer": "{}", "action": "overview", "args": "{}", "result": "Alerts: 3", "ai": "ollama"},
+                                                          {"n": 2, "t": 1700000003.0, "ms": 800, "kind": "turn", "question": "What next?", "answer": "{}", "action": "finish", "args": "{}", "result": "Finished", "ai": "ollama"}]}
+        ev = SH.audit_events(a)
+        self.assertEqual(len(ev), 2)
+        self.assertEqual(ev[0]["event"]["dataset"], "hayabusa-lens.ai_audit")
+        self.assertEqual(ev[0]["event"]["duration"], 1_200_000_000)
+        self.assertIn("overview", ev[0]["message"])
+        json.dumps(ev)
 
     def test_select_limit_and_level(self):
         rows = D.Dataset.from_dicts(D.demo_dicts(), "d").rows
@@ -198,13 +202,25 @@ class ShareServerTests(unittest.TestCase):
                 self.assertIn("attachment", r.headers["Content-Disposition"])
                 self.assertIn(marker, r.read().decode())
 
-    def test_agent_findings_and_bad_destination(self):
-        _, a = self.post("/api/agent", {"text": fixtures.demo_trace(), "name": "t.jsonl"})
-        code, r = self.post("/api/share", {"source": "agent", "id": a["id"], "minLevel": 2, "action": "preview"})
-        self.assertEqual((code, r["count"]), (200, a["flagged"]))
+    def test_audit_trail_can_be_shared_and_bad_destination_refused(self):
+        replies = iter([json.dumps({"thought": "t", "action": "overview", "args": {}}), json.dumps({"thought": "t", "action": "finish", "args": {"report": "x" * 200}})])
+        with mock.patch.object(server.LLM, "chat", side_effect=lambda *a, **k: next(replies)):
+            _, r = self.post("/api/investigate", {"job": self.job, "ai": {"provider": "ollama", "model": "m"}, "steps": 4})
+            for _ in range(100):
+                code, s = self.get(f"/api/status?job={r['job']}")
+                if s["state"] != "running":
+                    break
+                time.sleep(0.1)
+        code, p = self.post("/api/share", {"source": "audit", "id": s["agent"]["id"], "action": "preview"})
+        self.assertEqual((code, p["count"]), (200, 2))
         code, r = self.post("/api/share", {"job": self.job, "action": "send", "confirm": True, "dest": {"type": "elastic", "url": "http://siem.example.com"}})
         self.assertEqual(code, 400)
         self.assertIn("plain http", r["error"])
+
+    @classmethod
+    def get(cls, path):
+        with urllib.request.urlopen(f"http://127.0.0.1:{cls.port}{path}&token={cls.token}") as x:
+            return x.status, json.load(x)
 
 
 class ClaudeCodeTests(unittest.TestCase):

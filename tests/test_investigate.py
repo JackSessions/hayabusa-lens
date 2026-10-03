@@ -162,7 +162,20 @@ class ServerTests(unittest.TestCase):
         self.assertIn("svc.backup", a["report"])
         self.assertEqual(a["steps"][0]["kind"], "user")
         self.assertTrue(all(-1.0001 <= st[k] <= 1.0001 for st in a["steps"] for k in "xyz"))
-        self.assertEqual(self.req("/api/share", {"source": "agent", "id": a["id"], "action": "preview"})[0], 200)
+        self.assertEqual(self.req("/api/share", {"source": "audit", "id": a["id"], "action": "preview"})[1]["count"], len(a["audit"]))
+        # the audit trail: every question and answer, no prompts in the polling payload, full prompts on request
+        self.assertEqual([e["n"] for e in a["audit"]], [1, 2, 3])
+        self.assertTrue(all("prompt" not in e and e["answer"] and e["ai"] for e in a["audit"]))
+        self.assertEqual(a["audit"][1]["action"], "search")
+        code, full = self.req(f"/api/audit?id={a['id']}")
+        self.assertEqual(code, 200)
+        self.assertIn("UNTRUSTED DATA", full["audit"][0]["prompt"])
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/api/audit/download?id={a['id']}&fmt=md&token={self.token}") as x:
+            md = x.read().decode()
+            self.assertIn("attachment", x.headers["Content-Disposition"])
+        self.assertIn("Question sent to the AI", md)
+        self.assertIn("Tool chosen:", md)
+        self.assertEqual(self.req("/api/audit?id=nope")[0], 404)
 
     def test_online_provider_needs_consent_and_a_loaded_result(self):
         r = self.post("/api/investigate", {"job": self.job, "ai": {"provider": "openai"}})[1]
@@ -239,7 +252,7 @@ if __name__ == "__main__":
 
 
 class CLITests(unittest.TestCase):
-    def test_help_lists_the_new_commands_and_no_fake_data_wording(self):
+    def test_help_lists_the_commands_and_no_fake_data_wording(self):
         import contextlib
         import io
         from hayabusa_lens import cli
@@ -247,26 +260,57 @@ class CLITests(unittest.TestCase):
         with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
             cli.main(["--help"])
         text = out.getvalue()
-        for flag in ("--agent", "--no-ai-start", "--get-rules", "--samples", "--install-hayabusa", "Ollama"):
+        for flag in ("--no-ai-start", "--get-rules", "--samples", "--install-hayabusa", "Ollama", "audit trail"):
             self.assertIn(flag, text)
+        self.assertNotIn("--agent", text)
         self.assertNotIn("fictional", text)
 
-    def test_agent_flag_opens_the_agent_tab_link(self):
+    def test_ai_autostart_follows_the_flag(self):
+        import contextlib
+        import io
         with mock.patch.object(server, "make_server") as mk, mock.patch("webbrowser.open"), mock.patch.object(server.LLM, "autostart") as auto:
             httpd = mock.Mock()
             httpd.server_address = ("127.0.0.1", 1234)
             httpd.serve_forever.side_effect = KeyboardInterrupt
             mk.return_value = (httpd, "tok")
-            import contextlib
-            import io
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                server.serve(0, False, None, False, False, "/tmp/x.jsonl", True)
-            self.assertIn("agentpath=/tmp/x.jsonl", buf.getvalue())
+            with contextlib.redirect_stdout(io.StringIO()):
+                server.serve(0, False, None, False, False, True)
             time.sleep(0.2)
             auto.assert_called()
             auto.reset_mock()
-            with contextlib.redirect_stdout(buf):
-                server.serve(0, False, None, False, False, None, False)
+            with contextlib.redirect_stdout(io.StringIO()):
+                server.serve(0, False, None, False, False, False)
             time.sleep(0.2)
             auto.assert_not_called()
+
+
+class PathAndRuleTests(unittest.TestCase):
+    def test_attack_paths_follow_an_account_across_computers_in_time_order(self):
+        def row(i, ts, comp, user):
+            return {"i": i, "ts": ts, "lvl": 3, "title": "t", "comp": comp, "tactics": [], "tags": [], "details": {"TgtUser": user}, "extra": {}}
+        rows = [row(0, 1000, "PC-A", "bob"), row(1, 5000, "PC-B", "bob"), row(2, 9000, "PC-C", "bob"), row(3, 2000, "PC-A", "carol")]
+        p = AC.paths(rows)
+        self.assertEqual([(e["from"], e["to"]) for e in p], [("PC-A", "PC-B"), ("PC-B", "PC-C")])
+        self.assertEqual([e["n"] for e in p], [1, 2])
+        self.assertEqual(p[0]["via"], ["bob"])
+
+    def test_version_strings_and_broadcast_are_not_addresses(self):
+        from hayabusa_lens import netmap as NM
+        row = {"i": 0, "ts": 1, "lvl": 2, "title": "t", "comp": "PC1", "tactics": [], "tags": [], "details": {"FileVersion": "2.5.0.0", "SrcIP": "10.255.255.255", "TgtIP": "10.0.0.7"}, "extra": {}}
+        names = sorted(n["name"] for n in NM.build([row])["nodes"])
+        self.assertEqual(names, ["10.0.0.7", "PC1"])
+
+    def test_rules_are_deduplicated_across_engines(self):
+        import tempfile
+        from hayabusa_lens import rulesidx as RI
+        rule = "title: Same Rule\nid: 11111111-1111-1111-1111-111111111111\nlevel: high\ntags:\n  - attack.t1003\nlogsource:\n  product: windows\ndetection:\n  s:\n    EventID: 1\n  condition: s\n"
+        root = tempfile.mkdtemp()
+        for d in ("hayabusa/rules/sigma", "chainsaw/sigma", ".hayabusa-lens/rules/sigma-r1-core"):
+            os.makedirs(os.path.join(root, d))
+            open(os.path.join(root, d, "same.yml"), "w").write(rule)
+        ix = RI.RuleIndex([os.path.join(root, d) for d in ("hayabusa/rules", "chainsaw/sigma", ".hayabusa-lens/rules")])
+        s = ix.summary()
+        self.assertEqual((s["unique"], s["files"]), (1, 3))
+        hit = ix.search("same")[0]
+        self.assertEqual(hit["copies"], 3)
+        self.assertEqual(sorted(hit["sources"]), ["Chainsaw", "Hayabusa", "SigmaHQ"])

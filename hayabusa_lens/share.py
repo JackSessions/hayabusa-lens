@@ -68,17 +68,14 @@ def ecs_event(r: dict) -> dict:
     return ev
 
 
-def agent_events(analysis: dict, min_level: int = 2) -> list[dict]:
-    """Flagged agent steps as alert events."""
+def audit_events(analysis: dict) -> list[dict]:
+    """The AI audit trail as events: one per question put to the model."""
     out = []
-    now = time.time() * 1000
-    for s in analysis.get("steps", []):
-        if s["lvl"] < min_level:
-            continue
-        out.append({"@timestamp": _iso(now), "event": {"kind": "alert", "category": ["intrusion_detection"], "severity": SEVERITY[s["lvl"]], "dataset": "hayabusa-lens.agent", "module": "hayabusa-lens"},
-                    "message": f"Agent step {s['i']} ({s['kind']}) flagged: " + "; ".join(s["why"]), "rule": {"name": "Possible prompt injection or hijacked agent step", "id": "hl-agent-chain"},
-                    "labels": {"level": LEVELS[s["lvl"]], "vectors": analysis.get("mode", "")},
-                    "hayabusa_lens": {"version": __version__, "step": s["i"], "kind": s["kind"], "risk": s["risk"], "signals": s["why"], "excerpt": s["text"][:500], "source_log": analysis.get("label", "")}})
+    for e in analysis.get("audit", []):
+        out.append({"@timestamp": _iso(e["t"] * 1000), "event": {"kind": "event", "category": ["process"], "action": "ai_investigation_step", "severity": SEVERITY[0], "dataset": "hayabusa-lens.ai_audit", "module": "hayabusa-lens", "duration": e["ms"] * 1_000_000},
+                    "message": f"AI step {e['n']}: {e['question']} -> {e.get('action') or 'no action'} {e.get('args', '')}".strip(), "rule": {"name": "AI investigation audit trail", "id": "hl-ai-audit"},
+                    "labels": {"level": LEVELS[0], "ai": e.get("ai", "")},
+                    "hayabusa_lens": {"version": __version__, "step": e["n"], "kind": e["kind"], "tool": e.get("action", ""), "args": e.get("args", ""), "answer_excerpt": e.get("answer", "")[:500], "result_excerpt": e.get("result", "")[:500], "source_log": analysis.get("label", "")}})
     return out
 
 

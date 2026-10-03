@@ -2,7 +2,7 @@
 
 ![tests](https://github.com/JackSessions/hayabusa-lens/actions/workflows/test.yml/badge.svg)
 
-**Find what happened in Windows event logs, fast.** An unofficial dashboard for [Hayabusa](https://github.com/Yamato-Security/hayabusa) and [Chainsaw](https://github.com/WithSecureOpenSource/chainsaw). Scan `.evtx` files, explore the alerts, see the attack as a 3D map, and let an **AI helper investigate it step by step** and explain the attack chain in plain English. It also checks AI-agent logs for hijacking, and can hand findings to a free SIEM. It runs in your browser, on your computer.
+**Find what happened in Windows event logs, fast.** An unofficial dashboard for [Hayabusa](https://github.com/Yamato-Security/hayabusa) and [Chainsaw](https://github.com/WithSecureOpenSource/chainsaw). Scan `.evtx` files, explore the alerts, see the attack as a 3D map, and let an **AI helper investigate it step by step** and explain the attack chain in plain English. Every question it asks and every answer it gets is kept in an **audit trail** on the dashboard. It can hand findings to a free SIEM, and runs in your browser, on your computer.
 
 ![Home](docs/home.png)
 
@@ -10,12 +10,14 @@
 
 - **Two engines, one dashboard.** Hayabusa or Chainsaw, each with a checksum-verified *Download it for me* button.
 - **A clear dashboard.** Severity tiles, a zoomable timeline, click-to-filter rules, ATT&CK tactics, computers and event IDs, and the detection rule shown right in the event drawer.
-- **Investigate with AI.** The AI explores your results with read-only tools (overview, host, rule, search, timeline, event), decides what to look at next, then writes the attack chain: what happened, where, roughly when, which alert shows it, what is solid and what is a guess. Every step it takes is drawn as a path in 3D.
-- **Network map 3D.** Computers, accounts and addresses from any `.evtx` scan, linked when they share an alert, with an attack-chain panel (ATT&CK stages in order) and *Explain* buttons.
-- **Agent chain 3D.** Analyse a log of an AI agent run (Claude Code and Codex logs on your computer are listed) for jumps, injection phrases and secrets the task never asked for.
+- **Investigate with AI.** The AI explores your results with read-only tools (overview, host, rule, search, timeline, event), decides what to look at next, then writes the attack chain: what happened, where, roughly when, which alert shows it, what is solid and what is a guess. It can run automatically when results load (by default only when a local model is set up, so nothing leaves your computer).
+- **AI audit trail.** Every question put to the AI, every answer, the tool it chose and what the tool returned, with times and durations, live on the dashboard. Click a step for the full question and raw answer. Export as Markdown or JSON, or send it to a SIEM.
+- **AI path 3D.** The same investigation drawn as a path in 3D: tool calls, results, the goal and the report.
+- **Network map 3D.** Computers, accounts and addresses from any `.evtx` scan, with an attack-chain panel (ATT&CK stages in order), numbered **attack paths** between computers, and *Explain* buttons.
 - **AI helper, your way.** Auto, a local model with Ollama (started for you), Claude (your Claude Code login, no key needed, or an API key), or OpenAI.
 - **Share.** Export ECS JSON lines or CEF, or send alerts to a file, syslog, Elasticsearch/OpenSearch, Splunk HEC or a webhook, only after a preview and an explicit confirmation.
-- **Rule library.** A folder of SigmaHQ rules you can refresh online, or use offline.
+- **Rule library.** A folder of SigmaHQ rules you can refresh online, or use offline. The Rules tab shows each rule once, with where it ships (Hayabusa, Chainsaw, SigmaHQ).
+- **A night-security look in Google colours.** Frosted glass, a four-colour shield, glowing animated rings on buttons (reduced-motion friendly), dark, greyscale and light themes, a Back button, and a DFIR field note on the home screen.
 - **More:** compare two scans, search every event, summaries, three themes, built-in help, CSV/JSON/HTML export.
 
 | Dashboard (real public sample logs) | Detection rule in the drawer |
@@ -42,7 +44,6 @@ hayabusa-lens                          open the app (Hayabusa is found automatic
 hayabusa-lens /cases/host1/Logs        scan a folder of .evtx files straight away
 hayabusa-lens results.csv              open an existing Hayabusa/Chainsaw timeline
 hayabusa-lens --samples                download 14 real attack-simulation logs (about 1 MB) and scan them
-hayabusa-lens --agent session.jsonl    analyse an AI-agent log in 3D
 hayabusa-lens --install-hayabusa       download Hayabusa for this computer (checksum-verified)
 hayabusa-lens --install-chainsaw       optional: Chainsaw with its Sigma rules
 hayabusa-lens --get-rules [SET]        fill the rule library (core, core+, core++, all, emerging); add --offline for no internet
@@ -62,8 +63,9 @@ hayabusa-lens --samples
 ```
 
 1. The real sample logs are downloaded and scanned. The dashboard opens.
-2. Press **Network map** above the table to see the computers and accounts, with the attack stages on the right.
-3. Press **Investigate with AI**. Watch the steps appear, then read what the AI found.
+2. With Ollama set up, the AI starts investigating on its own. Otherwise press **Investigate**. The audit trail fills in live.
+3. Press **View path in 3D**, or **Network map** for the computers, accounts and numbered attack paths.
+4. Press **←** to go back through your tabs, or the shield to return home.
 
 ## The AI helper
 
@@ -83,21 +85,21 @@ Press **AI** at the top of the app.
 - **Test connection** makes a tiny real request. **What is happening** shows what the AI layer is doing (starting Ollama, asking a model, how long it took).
 - **Honest expectations.** Small local models write shallower reports than Claude or GPT-class models. In testing on the public sample logs, Claude correctly noticed they look like a collection of attack simulations rather than one real intrusion, and a 3.8B local model did not. AI text is a lead, not proof: check it against the alerts.
 
-## Investigate with AI
+## Investigate with AI and the audit trail
 
-![An AI investigation of the sample logs](docs/agent-chain.png)
+![An AI investigation of the sample logs](docs/ai-path.png)
 
-The AI gets a goal and seven read-only tools over the alerts already in memory: `overview`, `host`, `rule`, `search`, `timeline`, `event`, and `finish`. Each turn it replies with one JSON action; Hayabusa Lens runs it and gives back the result. Tools cannot run commands, read files or use the network, and tool output is passed back fenced as untrusted data. The whole run is recorded as a trace and drawn in 3D: blue squares are tool calls, yellow diamonds are results, green is the goal and the report, and arrows follow the path.
+The AI gets a goal and read-only tools over the alerts already in memory: `overview`, `host`, `rule`, `search`, `timeline`, `event`, and `finish`. Each turn it replies with one JSON action; Hayabusa Lens runs it and gives back the result. Tools cannot run commands, read files or use the network, and tool output is passed back fenced as untrusted data.
+
+![Audit trail on the dashboard](docs/audit-trail.png)
+
+The **audit trail** records, for every step: the question put to the AI, what it answered, the tool it chose, what that tool returned, the time and how long it took. Click a step for the full question and raw answer. Export it from the dashboard (`Audit (Markdown)`, `JSON`) or send it to a SIEM from the Share tab. The 3D path draws the same steps: blue squares are tool calls, yellow diamonds are results, green is the goal and the report.
 
 ## Network map and attack chain
 
 ![Network map from real EVTX logs](docs/netmap-evtx.png)
 
-Built from any scan, opened result or the sample alerts. Size is alert count, colour is worst severity, diamonds are accounts, squares are addresses (outlined means external). The panel on the right orders the ATT&CK stages seen, with no AI needed. *Explain the attack chain* turns it into a plain-English story; click a node to explain or investigate just that computer, account or address. It maps evidence in the logs, not the live network.
-
-## Agent logs
-
-Press **Agent chain**, pick a log (Claude Code and Codex logs on your computer are listed), or drop any JSONL file on the page. Each step becomes a point in 3D. The risk score uses a short list of well-known injection phrases (in tool results), acting soon after one, jumps away from the previous steps, and secrets such as `id_rsa` or `.env` that the task never mentioned. It is a heuristic, not a detector. With Ollama or OpenAI vectors the placement reflects meaning; the built-in vectors compare words only.
+Built from any scan, opened result or the sample alerts. Computers sit on a ring in the order they first raised an alert, with their accounts and addresses around them. Size is alert count, colour is worst severity, diamonds are accounts, squares are addresses (outlined means external). The panel on the right orders the ATT&CK stages seen, with no AI needed. **Attack paths** (numbered, glowing arrows) follow an account or address from the first computer it appeared on to the next, in time order. They are evidence from the logs, not proof of movement. *Explain the attack chain* turns it into a plain-English story; click a node to explain or investigate just that computer, account or address. It maps evidence in the logs, not the live network.
 
 ## Share with a SIEM (optional)
 
@@ -117,7 +119,13 @@ Events use ECS field names (`event.kind: alert`, `rule.*`, `host.name`, `source.
 
 ## Rule library
 
+![Rules](docs/rules.png)
+
+The **Rules** tab de-duplicates: the same Sigma rule ships with Hayabusa, Chainsaw and the library, so it is listed once with its sources. *Update rules* now ends with a plain "Rules updated" message and the new count.
+
 `~/.hayabusa-lens/rules` is always populated: `hayabusa-lens --get-rules` fetches the newest SigmaHQ release (checksum-verified), `--offline` uses the last download or 12 built-in starter rules. The Rules tab shows where they came from. Sigma rules belong to the [SigmaHQ](https://github.com/SigmaHQ/sigma) community (Detection Rule License 1.1).
+
+![Light theme](docs/home-light.png)
 
 ## How it works and privacy
 
@@ -131,7 +139,7 @@ Sample logs are **not bundled**. When asked, they are downloaded from the public
 
 ## Tested
 
-`python -m unittest discover -s tests -v` runs 117 tests: loaders, filters, the server's security checks, exports, the Hayabusa and Chainsaw subprocess flows (with stand-in programs), the rule library, vector analysis, the investigator loop (with a scripted model), the AI layer (fake services, no network), and sharing (real local sockets and fake HTTP servers). In CI, a separate job runs the real Hayabusa on real sample logs. A manual click-through checklist, including Windows, is in [docs/TESTING.md](docs/TESTING.md). Windows and macOS are covered by unit tests only; most hands-on testing was on Linux.
+`python -m unittest discover -s tests -v` runs 117 tests: loaders, filters, the server's security checks, exports, the Hayabusa and Chainsaw subprocess flows (with stand-in programs), the rule library and rule de-duplication, the investigator loop and audit trail (with a scripted model), attack paths, the AI layer (fake services, no network), and sharing (real local sockets and fake HTTP servers). In CI, a separate job runs the real Hayabusa on real sample logs. A manual click-through checklist, including Windows, is in [docs/TESTING.md](docs/TESTING.md). Windows and macOS are covered by unit tests only; most hands-on testing was on Linux.
 
 ## Known limitations
 

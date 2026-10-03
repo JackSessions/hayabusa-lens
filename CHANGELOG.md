@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.0
+- **AI audit trail.** Every question put to the AI and every answer, the tool it chose and what it returned, live on the dashboard, with full prompts on click and Markdown/JSON export. It can also be sent to a SIEM (`hayabusa-lens.ai_audit` events).
+- **AI works on your EVTX, not on agent prompts.** Removed the agent-log analysis, the Claude Code / Codex log discovery and `--agent`. The AI path tab now draws the investigation's own steps in 3D.
+- **Auto-investigate** when results load (on by default only for a local model; a toggle on the dashboard).
+- **Attack paths** on the network map (numbered, glowing arrows between computers in time order), and a cleaner hub-style layout.
+- **Map fix:** version strings such as `FileVersion 2.5.0.0` were being drawn as external IP addresses; broadcast addresses are ignored too.
+- **Rules fix:** *Update rules* no longer ends in a red "No detections found" error. Rules are de-duplicated (each Sigma rule was listed up to three times) and show their sources.
+- **New look:** frosted glass, a night-security backdrop in Google colours, a four-colour shield, glowing animated rings on buttons, a Back button with history, and a DFIR field note on the home screen. Honours reduced-motion settings.
+- Fixed the Back/Home state after scans.
+
+
 ## 0.7.0
 - **Investigate with AI.** An AI helper explores loaded EVTX results step by step with read-only tools (overview, host, rule, search, timeline, event), then writes the attack chain in plain English. The whole run is recorded and drawn as a path in 3D. Works with Ollama, Claude (Claude Code login or API key) and OpenAI.
 - **Attack chain from the alerts.** The Network map lists ATT&CK stages in attack order (no AI needed), with *Explain the attack chain* and per-node *Explain* / *Investigate*.

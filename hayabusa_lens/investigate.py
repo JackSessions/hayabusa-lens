@@ -171,9 +171,19 @@ Write in plain English, under 300 words:
 If the alerts look like test or sample data (many unrelated computers, or a very long time span) rather than one intrusion, say that first."""
 
 
-def investigate(rows: list[dict], ask, focus: str = "", max_steps: int = DEFAULT_STEPS, progress=None) -> dict:
-    """ask(prompt) -> str is the model. Returns {"steps": [trace steps], "report": str, "turns": n}."""
+def investigate(rows: list[dict], ask, focus: str = "", max_steps: int = DEFAULT_STEPS, progress=None, audit: list | None = None, on_audit=None) -> dict:
+    """ask(prompt) -> str is the model. Returns {"steps": [trace steps], "report": str, "turns": n, "audit": [...]}.
+
+    The audit trail records every question put to the model and every answer that came back, plus the tool it chose and what that tool returned."""
     say = progress or (lambda *a: None)
+    audit = audit if audit is not None else []
+
+    def asked(kind: str, summary: str, prompt: str) -> tuple[str, dict]:
+        t0 = time.time()
+        reply = ask(prompt)
+        e = {"n": len(audit) + 1, "t": t0, "ms": int((time.time() - t0) * 1000), "kind": kind, "question": summary, "prompt": prompt[:6000], "answer": reply.strip()[:4000], "action": "", "args": "", "result": ""}
+        audit.append(e)
+        return reply, e
     rows = [dict(r, i=i) for i, r in enumerate(rows)]
     tools = "\n".join(f"- {k} {v}" for k, v in TOOLS.items())
     goal = "Explain what happened in these alerts" + (f", focusing on: {focus}" if focus.strip() else "") + "."
@@ -183,14 +193,18 @@ def investigate(rows: list[dict], ask, focus: str = "", max_steps: int = DEFAULT
         hist = "\n".join(history[-6:]) or "(nothing yet. Start with overview.)"
         last = turn == max_steps
         prompt = PROMPT.format(focus=f"Focus: {focus}\n" if focus.strip() else "", tools=tools, steps=max_steps, history=hist + ("\nYou are out of steps: call finish now." if last else ""))
-        reply = ask(prompt)
+        reply, ent = asked("turn", "Where should I start?" if turn == 1 else "What should I look at next?" + (" (out of steps: finish now)" if last else ""), prompt)
         act = parse_action(reply)
         if act is None:
-            reply2 = ask(prompt + "\n\nYour last reply was not valid JSON. Reply with ONLY the JSON object.")
+            reply2, ent2 = asked("retry", "That was not valid JSON. Reply with only the JSON action.", prompt + "\n\nYour last reply was not valid JSON. Reply with ONLY the JSON object.")
+            ent = ent2
             act = parse_action(reply2)
             if act is None:
                 report = reply.strip()[:3000] or "(the model did not answer)"
                 steps.append({"kind": "assistant", "label": "reply", "text": report})
+                ent["action"], ent["result"] = "(prose)", "Not valid JSON, used as the report."
+                if on_audit:
+                    on_audit(ent)
                 say(turn, max_steps, "the model replied in prose, using that as the report")
                 break
         name, args, thought = str(act.get("action", "")).strip(), act.get("args") or {}, str(act.get("thought", "")).strip()[:400]
@@ -198,14 +212,21 @@ def investigate(rows: list[dict], ask, focus: str = "", max_steps: int = DEFAULT
             steps.append({"kind": "assistant", "label": "thinking", "text": thought})
         argtxt = json.dumps(args, ensure_ascii=False)[:300]
         steps.append({"kind": "tool_call", "label": "tool: " + name, "text": f"{name} {argtxt}"})
+        ent["action"], ent["args"] = name, argtxt
         if name == "finish":
             report = str(args.get("report") or act.get("report") or "").strip()[:4000]
+            ent["result"] = "Finished" + (": report written." if len(report) >= 150 else ": the report was too short, writing it up properly next.")
+            if on_audit:
+                on_audit(ent)
             say(turn, max_steps, "writing the report")
             break
         key = (name, argtxt)
         out = "Already done. Try a different tool or arguments, or finish." if key in seen else run_tool(rows, name, args)
         seen.add(key)
         out = out[:MAX_OUT]
+        ent["result"] = out
+        if on_audit:
+            on_audit(ent)
         steps.append({"kind": "tool_result", "label": "result", "text": out})
         history.append(f"Step {turn}: you called {name} {argtxt}\n<result>\n{out}\n</result>")
         say(turn, max_steps, f"{name} {argtxt[:60]}")
@@ -214,7 +235,11 @@ def investigate(rows: list[dict], ask, focus: str = "", max_steps: int = DEFAULT
         evidence = "\n\n".join(h.split("\n", 1)[1].replace("<result>", "").replace("</result>", "").strip()[:1800] for h in history[-6:]) or AC.digest(rows)
         evidence = (AC.digest(rows, focus, 2500) + "\n\nWhat the investigation looked at:\n" + evidence)[:7500]
         try:
-            report = ask(WRITEUP.format(focus=f"Focus: {focus}\n" if focus.strip() else "", evidence=evidence)).strip()[:4000] or report
+            wreply, went = asked("report", "Write the final report from the evidence gathered.", WRITEUP.format(focus=f"Focus: {focus}\n" if focus.strip() else "", evidence=evidence))
+            report = wreply.strip()[:4000] or report
+            went["action"], went["result"] = "report", report[:600]
+            if on_audit:
+                on_audit(went)
         except Exception:
             pass
     if not report:
@@ -222,4 +247,4 @@ def investigate(rows: list[dict], ask, focus: str = "", max_steps: int = DEFAULT
     steps.append({"kind": "assistant", "label": "report", "text": report})
     for i, s in enumerate(steps):
         s["i"] = i
-    return {"steps": steps, "report": report, "turns": sum(1 for s in steps if s["kind"] == "tool_call")}
+    return {"steps": steps, "report": report, "turns": sum(1 for s in steps if s["kind"] == "tool_call"), "audit": audit}

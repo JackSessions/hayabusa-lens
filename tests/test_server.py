@@ -74,6 +74,15 @@ class ServerTests(unittest.TestCase):
             time.sleep(0.05)
         self.fail("job did not finish")
 
+    @unittest.skipIf(os.name == "nt", "stand-in program is a shell script")
+    def test_update_rules_ends_with_a_friendly_notice_not_an_error(self):
+        code, raw = self.call("/api/update-rules", {})
+        self.assertEqual(code, 200)
+        s = self.finish(json.loads(raw)["job"])
+        self.assertEqual(s["state"], "done")
+        self.assertIn("Rules updated", s["notice"])
+        self.assertFalse(s.get("error"))
+
     def test_requires_token_and_local_host(self):
         self.assertEqual(self.call("/api/hayabusa", token=False)[0], 403)
         self.assertEqual(self.call("/", host="evil.example.com")[0], 403)

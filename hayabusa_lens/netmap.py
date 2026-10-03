@@ -13,6 +13,7 @@ IP = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 IP6 = re.compile(r"(?<![0-9a-f:])(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}(?![0-9a-f:])", re.I)
 USER_KEYS = re.compile(r"(?:^|[a-z])(?:user|username|acct|account|accountname|logonuser)$|^(?:tgt|src|target|subject)(?:user|acct|account)(?:name)?$", re.I)
 HOST_KEYS = re.compile(r"workstation|src ?comp|source ?host|srchost|target ?comp|dest ?host|remote ?host", re.I)
+NOT_IP_KEYS = re.compile(r"version|product|company|description|hash|guid|signature|copyright|original|ver$", re.I)    # 2.5.0.0 in FileVersion is not an address
 SKIP_USERS = {"", "-", "n/a", "none", "null", "anonymous logon", "system", "local service", "network service", "window manager", "font driver host"}
 MAX_NODES = 160
 DOC_NETS = [ipaddress.ip_network(n) for n in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24")]
@@ -24,6 +25,8 @@ def _ip_kind(s: str) -> str | None:
     except ValueError:
         return None
     if a.is_loopback or a.is_unspecified or a.is_multicast or a.is_link_local:
+        return None
+    if a.version == 4 and a.packed[1:] == b"\xff\xff\xff":                        # x.255.255.255 broadcast
         return None
     if a.version == 4 and any(a in n for n in DOC_NETS):        # documentation ranges stand in for "the internet" in demo data
         return "external"
@@ -58,7 +61,7 @@ def entities(r: dict) -> dict:
             users.append(_user(sv))
         if HOST_KEYS.search(k) and sv.strip() not in ("", "-") and not IP.fullmatch(sv.strip()):
             hosts.append(_short(sv.strip()))
-        ips += [m for m in IP.findall(sv) + IP6.findall(sv) if _ip_kind(m)]
+        ips += [m for m in ([] if NOT_IP_KEYS.search(k) else IP.findall(sv) + IP6.findall(sv)) if _ip_kind(m)]
     uniq = lambda xs: list(dict.fromkeys(xs))
     return {"users": uniq(users), "hosts": uniq(hosts), "ips": uniq(ips)}
 
@@ -97,7 +100,7 @@ def build(rows: list[dict]) -> dict:
                     members.append(node("user", u, r))
             if HOST_KEYS.search(k) and sv.strip() not in ("", "-") and not IP.fullmatch(sv.strip()):
                 members.append(node("host", _short(sv.strip()), r))
-            for m in IP.findall(sv) + IP6.findall(sv):
+            for m in ([] if NOT_IP_KEYS.search(k) else IP.findall(sv) + IP6.findall(sv)):
                 kind = _ip_kind(m)
                 if kind:
                     members.append(node("ip", m, r, kind))

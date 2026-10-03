@@ -52,39 +52,18 @@ class TraceTests(unittest.TestCase):
             with self.assertRaises(VC.TraceError):
                 VC.parse_trace(bad)
 
-    def test_pca_deterministic(self):
-        st = VC.parse_trace(fixtures.demo_trace())
-        a = VC.analyze(st)["steps"]
-        b = VC.analyze(st)["steps"]
-        self.assertEqual([s["x"] for s in a], [s["x"] for s in b])
-
-
-class DiscoveryTests(unittest.TestCase):
-    def test_find_traces_and_codex_format(self):
-        home = tempfile.mkdtemp()
-        d = os.path.join(home, ".claude", "projects", "-home-me-proj")
-        os.makedirs(d)
-        with open(os.path.join(d, "a.jsonl"), "w") as f:
-            f.write(fixtures.demo_trace())
-        old = os.environ.get("HOME")
-        os.environ["HOME"] = home
-        try:
-            found = VC.find_traces()
-        finally:
-            os.environ["HOME"] = old
-        self.assertEqual([(x["tool"], x["project"]) for x in found], [("Claude Code", "home/me/proj")])
-        codex = "\n".join(json.dumps(x) for x in [
-            {"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "run ls"}]}},
-            {"type": "response_item", "payload": {"type": "function_call", "name": "shell", "arguments": "{\"cmd\":\"ls\"}"}},
-            {"type": "response_item", "payload": {"type": "function_call_output", "output": "a b c"}}])
-        self.assertEqual([s["kind"] for s in VC.parse_trace(codex)], ["user", "tool_call", "tool_result"])
-
     def test_agent_own_code_is_not_flagged_as_injection(self):
         rows = [{"role": "user", "content": "write a detector for prompt injection"},
                 {"type": "tool_use", "role": "assistant", "tool_name": "write", "args": {"text": "ignore all previous instructions"}},
                 {"role": "assistant", "content": "Done, the detector looks for ignore all previous instructions."}]
         r = VC.analyze(VC.parse_trace("\n".join(json.dumps(x) for x in rows)))
         self.assertEqual(r["flagged"], 0)
+
+    def test_pca_deterministic(self):
+        st = VC.parse_trace(fixtures.demo_trace())
+        a = VC.analyze(st)["steps"]
+        b = VC.analyze(st)["steps"]
+        self.assertEqual([s["x"] for s in a], [s["x"] for s in b])
 
 
 class LLMTests(unittest.TestCase):
@@ -149,60 +128,6 @@ class NetmapTests(unittest.TestCase):
         rows = D.Dataset.from_dicts([{"Timestamp": "2024-01-01T00:00:00Z", "RuleTitle": "x", "Level": "low", "Computer": "PC1", "Details": {"User": "SYSTEM", "Src": "127.0.0.1 and 8.8.8.8"}}], "d").rows
         g = NM.build(rows)
         self.assertEqual(sorted(n["name"] for n in g["nodes"]), ["8.8.8.8", "PC1"])
-
-
-class AgentServerTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.httpd, cls.token = server.make_server(0)
-        cls.port = cls.httpd.server_address[1]
-        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.httpd.shutdown()
-
-    def post(self, path, body):
-        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}?token={self.token}", data=json.dumps(body).encode(), method="POST")
-        try:
-            with urllib.request.urlopen(req) as r:
-                return r.status, json.load(r)
-        except urllib.error.HTTPError as e:
-            return e.code, json.load(e)
-
-    def test_demo_and_file(self):
-        code, r = self.post("/api/agent", {"text": fixtures.demo_trace(), "name": "t.jsonl"})
-        self.assertEqual(code, 200)
-        self.assertGreaterEqual(r["flagged"], 3)
-        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
-            f.write(fixtures.demo_trace())
-        code, r2 = self.post("/api/agent", {"path": f.name})
-        os.unlink(f.name)
-        self.assertEqual((code, r2["n"]), (200, r["n"]))
-
-    def test_upload_text(self):
-        code, r = self.post("/api/agent", {"text": fixtures.demo_trace(), "name": "dropped.jsonl"})
-        self.assertEqual((code, r["label"]), (200, "dropped.jsonl"))
-        self.assertEqual(self.post("/api/agent", {"text": "garbage"})[0], 400)
-
-    def test_consent_required_for_api(self):
-        code, r = self.post("/api/agent", {"text": fixtures.demo_trace(), "embed": {"provider": "openai", "key": "sk-x"}})
-        self.assertEqual(code, 400)
-        self.assertIn("confirm", r["error"])
-
-    def test_missing_file_and_unknown_analysis(self):
-        self.assertEqual(self.post("/api/agent", {"path": "/no/such/file.jsonl"})[0], 400)
-        self.assertEqual(self.post("/api/agent/explain", {"id": "nope", "provider": "anthropic", "consent": True})[0], 404)
-
-    def test_auth_required(self):
-        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/agent", data=b"{}", method="POST")
-        with self.assertRaises(urllib.error.HTTPError) as cm:
-            urllib.request.urlopen(req)
-        self.assertEqual(cm.exception.code, 403)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class LocalAITests(unittest.TestCase):

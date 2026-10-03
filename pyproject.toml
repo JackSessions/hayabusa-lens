@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hayabusa-lens"
-version = "0.7.0"
+version = "0.8.0"
 description = "An unofficial point-and-click front end for Hayabusa: scan Windows event logs, explore detections, zoom the timeline, export reports"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"

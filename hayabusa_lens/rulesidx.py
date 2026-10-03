@@ -71,14 +71,51 @@ class RuleIndex:
         p = (self.by_id.get(rule_id.lower()) if rule_id else None) or (self.by_file.get(rule_file.lower(), [None])[0] if rule_file else None) or (self.by_title.get(title.lower()) if title else None)
         return self.entries.get(p) if p else None
 
+    @staticmethod
+    def source_of(path: str) -> str:
+        p = path.replace("\\", "/").lower()
+        if "/rules/starter/" in p:
+            return "Starter"
+        if "/sigma-" in p and "/.hayabusa-lens/rules/" in p:
+            return "SigmaHQ"
+        if "chainsaw" in p:
+            return "Chainsaw"
+        if "hayabusa" in p:
+            return "Hayabusa"
+        return "Other"
+
+    def unique(self) -> list[dict]:
+        """One entry per rule: the same Sigma rule ships with Hayabusa, Chainsaw and the rule library, so group copies by id (or title)."""
+        groups: dict[str, dict] = {}
+        for e in self.entries.values():
+            k = e["id"].lower() or "t:" + e["title"].lower()
+            g = groups.get(k)
+            if g is None:
+                groups[k] = dict(e, sources=[self.source_of(e["path"])], copies=1)
+            else:
+                g["copies"] += 1
+                s = self.source_of(e["path"])
+                if s not in g["sources"]:
+                    g["sources"].append(s)
+        return list(groups.values())
+
     def search(self, q: str, limit: int = 60) -> list[dict]:
         words = q.lower().split()
-        hits = [e for e in self.entries.values() if all(w in e["blob"] for w in words)] if words else list(self.entries.values())
+        uniq = self.unique()
+        hits = [e for e in uniq if all(w in e["blob"] for w in words)] if words else uniq
         hits.sort(key=lambda e: (e["title"].lower().find(words[0]) if words and words[0] in e["title"].lower() else 999, e["title"].lower()))
-        out = [{k: e[k] for k in ("path", "title", "id", "level", "tags", "file", "status")} for e in hits[:limit]]
+        out = [{k: e[k] for k in ("path", "title", "id", "level", "tags", "file", "status", "sources", "copies")} for e in hits[:limit]]
         for o in out:
             o["folder"] = os.path.basename(os.path.dirname(o["path"]))
         return out
+
+    def summary(self) -> dict:
+        u = self.unique()
+        by: dict[str, int] = {}
+        for e in u:
+            for s in e["sources"]:
+                by[s] = by.get(s, 0) + 1
+        return {"unique": len(u), "files": len(self.entries), "sources": by}
 
     def read(self, path: str) -> str | None:
         if path not in self.entries:                 # only files we indexed are ever served

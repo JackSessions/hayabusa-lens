@@ -49,6 +49,39 @@ def stages(rows: list[dict], min_level: int = 1) -> list[dict]:
     return out
 
 
+def paths(rows: list[dict], min_level: int = 1, limit: int = 14) -> list[dict]:
+    """Likely movement between computers: an account or address that shows up on several computers is followed from the first
+    computer it appeared on to the next, in time order. Evidence only: the same name on two computers can also be a shared lab image."""
+    seen: dict[str, dict[str, float]] = {}
+    label: dict[str, tuple[str, str]] = {}
+    for r in rows:
+        if r["lvl"] < min_level:
+            continue
+        ent = NM.entities(r)
+        host = NM._short(r.get("comp") or "")
+        if not host:
+            continue
+        for kind, names in (("account", ent["users"]), ("address", ent["ips"])):
+            for n in names:
+                key = f"{kind}:{n.lower()}"
+                label[key] = (kind, n)
+                h = seen.setdefault(key, {})
+                h[host] = min(h.get(host, r["ts"]), r["ts"])
+    edges: dict[tuple, dict] = {}
+    for key, hosts in seen.items():
+        if len(hosts) < 2 or len(hosts) > 8:                       # something on everything is a shared name, not a path
+            continue
+        order = sorted(hosts.items(), key=lambda kv: kv[1])
+        for (a, ta), (b, tb) in zip(order, order[1:]):
+            e = edges.setdefault((a, b), {"from": a, "to": b, "via": [], "first": ta, "then": tb})
+            e["via"].append(label[key][1])
+            e["first"], e["then"] = min(e["first"], ta), min(e["then"], tb)
+    out = sorted(edges.values(), key=lambda e: (-len(e["via"]), e["first"]))[:limit]
+    for i, e in enumerate(sorted(out, key=lambda e: e["first"]), 1):
+        e["n"] = i
+    return [{"n": e["n"], "from": e["from"], "to": e["to"], "via": e["via"][:4], "count": len(e["via"]), "first": _t(e["first"]), "then": _t(e["then"])} for e in sorted(out, key=lambda e: e["n"])]
+
+
 def _detail(r: dict, n: int = 160) -> str:
     d = r.get("details") or {}
     keep = [f"{k}={str(v)[:90]}" for k, v in d.items() if k in ("Cmdline", "CommandLine", "Proc", "ParentCmdline", "TgtUser", "SrcUser", "User", "SrcIP", "IpAddress", "TgtIP", "Path", "Svc", "TaskName", "Rule")]
