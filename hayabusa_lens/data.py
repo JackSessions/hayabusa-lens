@@ -58,7 +58,37 @@ def _flat(v) -> str:
     return "" if v is None else str(v)
 
 
+def _val(x):
+    if isinstance(x, dict):
+        return x.get("#text", "")
+    return x
+
+
+def chainsaw_dict(c: dict) -> dict:
+    """Chainsaw's JSON detection -> the shape Hayabusa Lens works with."""
+    docs = c.get("documents")
+    doc = c.get("document") or (docs[0] if docs else {}) or {}
+    data = doc.get("data") or {}
+    ev = data.get("Event", data) if isinstance(data, dict) else {}
+    sysd = ev.get("System", {}) if isinstance(ev, dict) else {}
+    payload = ev.get("EventData") or ev.get("UserData") or {} if isinstance(ev, dict) else {}
+    if isinstance(payload, dict):
+        payload = {k: v for k, v in payload.items() if not str(k).endswith("_attributes")}
+        if len(payload) == 1 and isinstance(next(iter(payload.values())), dict):
+            payload = {k: v for k, v in next(iter(payload.values())).items()}
+    ts = c.get("timestamp") or ((sysd.get("TimeCreated_attributes") or {}).get("SystemTime"))
+    other = [x for x in (c.get("group"), c.get("status")) if x]
+    extra = {"Authors": ", ".join(c.get("authors") or []), "Detected by": "Chainsaw"}
+    if docs:
+        extra["Matching events"] = len(docs)
+    return {"Timestamp": ts, "RuleTitle": c.get("name"), "Level": c.get("level"), "Computer": sysd.get("Computer"), "Channel": sysd.get("Channel"),
+            "EventID": _val(sysd.get("EventID")), "RecordID": _val(sysd.get("EventRecordID")), "MitreTactics": [], "MitreTags": [], "OtherTags": other,
+            "Details": payload, "ExtraFieldInfo": extra, "RuleFile": "", "RuleID": "", "EvtxFile": doc.get("path", "")}
+
+
 def make_row(i: int, d: dict) -> dict | None:
+    if "document" in d or "documents" in d:
+        d = chainsaw_dict(d)
     ts = parse_ts(d.get("Timestamp") or d.get("timestamp"))
     if ts is None:
         return None
@@ -197,8 +227,18 @@ def mitre_url(tag: str) -> str | None:
     return f"https://attack.mitre.org/techniques/T{m.group(1)}/" + (f"{m.group(2)}/" if m.group(2) else "")
 
 
+def _demo_details(rnd, ipr, host: str, title: str) -> dict:
+    d = {"Cmdline": f"demo-command-{rnd.randint(1, 40)}.exe", "User": f"{host}\\demo.user"}
+    if title in ("Failed Logon Burst", "Suspicious PowerShell Download Cradle"):
+        d["SrcIP"] = f"203.0.113.{ipr.choice([7, 7, 7, 44])}"                     # fictional outside address
+    elif title in ("Admin Share Access From Workstation", "Net Conn", "Mimikatz-Like LSASS Access"):
+        d["SrcIP"] = f"10.0.0.{ipr.choice([21, 22])}"
+        d["TargetUser"] = ipr.choice(["svc.backup", "demo.admin"])
+    return d
+
+
 def demo_dicts() -> list[dict]:
-    """Clearly fictional sample detections so the interface can be tried without Hayabusa or any logs."""
+    """Made-up sample detections so the interface can be tried without Hayabusa or any logs."""
     import random
     rnd = random.Random(7)
     base = datetime(2026, 3, 14, 8, 0, 0, tzinfo=timezone.utc)
@@ -211,12 +251,13 @@ def demo_dicts() -> list[dict]:
         ("Mimikatz-Like LSASS Access", "crit", "Sysmon", 10, ["CredAccess"], ["T1003.001"], 2), ("New Service Installed", "med", "System", 7045, ["Persis", "PrivEsc"], ["T1543.003"], 6),
     ]
     out = []
+    ipr = random.Random(11)
     for title, level, chan, eid, tactics, tags, weight in rules:
         for _ in range(weight * 3):
             t = base + timedelta(minutes=rnd.randint(0, 600), seconds=rnd.randint(0, 59))
             host = rnd.choice(hosts[:2] if level in ("info", "low") else hosts)
             out.append({"Timestamp": t.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z", "RuleTitle": title, "Level": level, "Computer": host, "Channel": chan, "EventID": eid,
                         "MitreTactics": tactics, "MitreTags": tags, "OtherTags": [], "RecordID": rnd.randint(1000, 99999),
-                        "Details": {"Cmdline": f"demo-command-{rnd.randint(1, 40)}.exe", "User": f"{host}\\demo.user", "Note": "DEMO DATA"},
-                        "ExtraFieldInfo": {"Note": "fictional"}, "RuleFile": title.lower().replace(" ", "_") + ".yml", "RuleID": f"demo-{__import__("zlib").crc32(title.encode()) % 10**8:08d}", "EvtxFile": "demo/Security.evtx"})
+                        "Details": _demo_details(rnd, ipr, host, title),
+                        "ExtraFieldInfo": {}, "RuleFile": title.lower().replace(" ", "_") + ".yml", "RuleID": f"demo-{__import__("zlib").crc32(title.encode()) % 10**8:08d}", "EvtxFile": "demo/Security.evtx"})
     return out

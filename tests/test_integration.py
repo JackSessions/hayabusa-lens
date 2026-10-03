@@ -27,5 +27,31 @@ class RealHayabusaTests(unittest.TestCase):
         self.assertTrue(any(r["lvl"] >= 3 for r in ds.rows), "expected at least one high or critical detection")
 
 
+def _has_chainsaw():
+    from hayabusa_lens import chainsaw as CS
+    return CS.find_chainsaw() is not None
+
+
+@unittest.skipUnless(os.path.isdir(SAMPLES) and _has_chainsaw(), "needs a real Chainsaw (python -m hayabusa_lens --install-chainsaw) and sample .evtx files")
+class RealChainsawTests(unittest.TestCase):
+    def test_hunt_a_folder_and_enrich_from_sigma(self):
+        from hayabusa_lens import chainsaw as CS
+        from hayabusa_lens import rulesidx as RI
+        path = CS.find_chainsaw()
+        self.assertTrue(path)
+        info = CS.probe(path)
+        self.assertTrue(info["ready"], "the release package should include sigma/ and mappings/")
+        out = CS.scan(info, os.path.abspath(SAMPLES), [])
+        try:
+            ds = D.Dataset.load(out)
+        finally:
+            os.unlink(out)
+        self.assertGreater(ds.summary()["total"], 20)
+        self.assertEqual(ds.summary()["skipped"], 0)
+        ix = RI.RuleIndex([info["sigma"], info["rules"]])
+        self.assertGreater(len(ix.entries), 1000)
+        self.assertTrue(any(ix.find(title=r["title"]) for r in ds.rows), "detections should map back to rule files")
+
+
 if __name__ == "__main__":
     unittest.main()

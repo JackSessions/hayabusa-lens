@@ -1,0 +1,19 @@
+title: LSASS Process Access
+id: 158e3cda-8b39-52f0-ae75-aaf607906f32
+status: example
+description: Hayabusa Lens starter rule (an original, simplified example): a process opened lsass.exe, a common credential dumping step.
+author: Hayabusa Lens
+date: 2026-10-03
+tags:
+  - attack.credential_access
+  - attack.t1003.001
+logsource:
+  category: process_access
+  product: windows
+detection:
+  selection:
+    TargetImage|endswith: '\lsass.exe'
+  condition: selection
+falsepositives:
+  - Legitimate administration
+level: high

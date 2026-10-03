@@ -1,4 +1,4 @@
-"""Terminal niceties: a rainbow banner for --help (only when talking to a real terminal)."""
+"""Terminal niceties: a banner for --help (only when talking to a real terminal)."""
 from __future__ import annotations
 
 import os
@@ -18,25 +18,16 @@ BANNER = r"""
 """
 
 
-def hsv_rgb(h: float) -> tuple[int, int, int]:
-    i = int(h * 6) % 6
-    f = h * 6 - int(h * 6)
-    r, g, b = [(1, f, 0), (1 - f, 1, 0), (0, 1, f), (0, 1 - f, 1), (f, 0, 1), (1, 0, 1 - f)][i]
-    return int(r * 255), int(g * 255), int(b * 255)
+BLUE, AMBER, GREEN = (138, 180, 248), (253, 214, 99), (129, 201, 149)     # soft Google-style blue, yellow and green
+
+
+def paint(text: str, rgb: tuple[int, int, int], bold: bool = False) -> str:
+    return f"\x1b[{'1;' if bold else ''}38;2;{rgb[0]};{rgb[1]};{rgb[2]}m{text}\x1b[0m"
 
 
 def rainbow(text: str) -> str:
-    out = []
-    for row, line in enumerate(text.split("\n")):
-        chars = []
-        for col, ch in enumerate(line):
-            if ch == " ":
-                chars.append(ch)
-                continue
-            r, g, b = hsv_rgb(((col * 5 + row * 18) % 360) / 360)
-            chars.append(f"\x1b[1;38;2;{r};{g};{b}m{ch}")
-        out.append("".join(chars) + "\x1b[0m")
-    return "\n".join(out)
+    """Name kept for compatibility: the banner is drawn in one calm blue."""
+    return "\n".join(paint(line, BLUE) for line in text.split("\n"))
 
 
 def color_ok() -> bool:

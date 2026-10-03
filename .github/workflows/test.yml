@@ -31,6 +31,8 @@ jobs:
         run: |
           git clone --depth 1 --filter=blob:none --sparse https://github.com/Yamato-Security/hayabusa-sample-evtx samples
           cd samples && git sparse-checkout set EVTX-ATTACK-SAMPLES/Persistence
+      - name: Get Chainsaw (with its Sigma rules) using the tool's own installer
+        run: python -m hayabusa_lens --install-chainsaw
       - name: Integration test
         env:
           HAYABUSA_PATH: ${{ github.workspace }}/hb

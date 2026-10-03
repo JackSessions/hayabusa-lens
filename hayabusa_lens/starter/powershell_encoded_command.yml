@@ -1,0 +1,24 @@
+title: PowerShell Encoded Command
+id: a6f8e4f9-2a86-5a15-ba8e-c76802faab3b
+status: example
+description: Hayabusa Lens starter rule (an original, simplified example): powershell launched with an encoded command, often used to hide payloads.
+author: Hayabusa Lens
+date: 2026-10-03
+tags:
+  - attack.execution
+  - attack.t1059.001
+  - attack.defense_evasion
+  - attack.t1027
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains:
+      - ' -enc '
+      - ' -EncodedCommand '
+  condition: selection
+falsepositives:
+  - Legitimate administration
+level: high

@@ -1,0 +1,19 @@
+title: Failed Logon
+id: ee4018dc-e934-59cc-92ec-9284f40975cc
+status: example
+description: Hayabusa Lens starter rule (an original, simplified example): an account failed to log on (event 4625); many in a short time suggests password guessing.
+author: Hayabusa Lens
+date: 2026-10-03
+tags:
+  - attack.credential_access
+  - attack.t1110
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4625
+  condition: selection
+falsepositives:
+  - Legitimate administration
+level: low

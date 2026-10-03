@@ -1,0 +1,22 @@
+title: Mimikatz Command Line Keywords
+id: ca088a51-6128-5211-9db0-f63c12343068
+status: example
+description: Hayabusa Lens starter rule (an original, simplified example): command line contains well-known mimikatz commands.
+author: Hayabusa Lens
+date: 2026-10-03
+tags:
+  - attack.credential_access
+  - attack.t1003
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    CommandLine|contains:
+      - 'sekurlsa::'
+      - 'lsadump::'
+      - 'privilege::debug'
+  condition: selection
+falsepositives:
+  - Legitimate administration
+level: critical

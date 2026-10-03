@@ -1,0 +1,20 @@
+title: Scheduled Task Created
+id: c1a56e8a-ec6f-525d-8ca5-b344e00583e8
+status: example
+description: Hayabusa Lens starter rule (an original, simplified example): a scheduled task was created (event 4698); common for persistence.
+author: Hayabusa Lens
+date: 2026-10-03
+tags:
+  - attack.persistence
+  - attack.execution
+  - attack.t1053.005
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4698
+  condition: selection
+falsepositives:
+  - Legitimate administration
+level: medium

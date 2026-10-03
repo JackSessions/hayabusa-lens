@@ -1,0 +1,20 @@
+title: New Service Installed
+id: d7db3708-3a67-57a8-a6b9-19393c6a077b
+status: example
+description: Hayabusa Lens starter rule (an original, simplified example): a service was installed (event 7045); common for persistence and lateral movement.
+author: Hayabusa Lens
+date: 2026-10-03
+tags:
+  - attack.persistence
+  - attack.privilege_escalation
+  - attack.t1543.003
+logsource:
+  product: windows
+  service: system
+detection:
+  selection:
+    EventID: 7045
+  condition: selection
+falsepositives:
+  - Legitimate administration
+level: medium

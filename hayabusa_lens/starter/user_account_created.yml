@@ -1,0 +1,19 @@
+title: User Account Created
+id: 26e3139d-4301-5bee-9c72-fa04d992deaf
+status: example
+description: Hayabusa Lens starter rule (an original, simplified example): a local user account was created (event 4720).
+author: Hayabusa Lens
+date: 2026-10-03
+tags:
+  - attack.persistence
+  - attack.t1136.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4720
+  condition: selection
+falsepositives:
+  - Legitimate administration
+level: low

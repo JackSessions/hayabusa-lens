@@ -1,0 +1,19 @@
+title: Security Audit Log Cleared
+id: fd4b408a-54d0-50f2-b08c-d96dc9d9e89e
+status: example
+description: Hayabusa Lens starter rule (an original, simplified example): windows event 1102 means the Security log was cleared.
+author: Hayabusa Lens
+date: 2026-10-03
+tags:
+  - attack.defense_evasion
+  - attack.t1070.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 1102
+  condition: selection
+falsepositives:
+  - Legitimate administration
+level: high

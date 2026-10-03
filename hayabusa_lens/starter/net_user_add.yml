@@ -1,0 +1,24 @@
+title: Local User Added With Net Command
+id: cdfd0b45-2096-5e8e-829b-61208bce22d2
+status: example
+description: Hayabusa Lens starter rule (an original, simplified example): net user /add creates an account from the command line.
+author: Hayabusa Lens
+date: 2026-10-03
+tags:
+  - attack.persistence
+  - attack.t1136.001
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith:
+      - '\net.exe'
+      - '\net1.exe'
+    CommandLine|contains|all:
+      - ' user '
+      - ' /add'
+  condition: selection
+falsepositives:
+  - Legitimate administration
+level: medium

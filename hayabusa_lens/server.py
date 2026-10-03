@@ -15,14 +15,29 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import __author__, __url__, __version__
 from . import data as D
+from . import chainsaw as CS
+from . import attackchain as AC
+from . import compare as CP
+from . import investigate as INV
 from . import install as I
+from . import llm as LLM
+from . import netmap as NM
+from . import rulelib as RL
+from . import rulesidx as RI
 from . import runner as R
+from . import samples as SM
+from . import share as SH
+from . import tools as TL
+from . import vectorchain as VC
 from .page import PAGE
 
 MAX_BODY = 8192
+MAX_UPLOAD = 40 << 20                  # a pasted or dropped agent trace
 JOBS: dict[str, dict] = {}
 LOCK = threading.Lock()
-STATE = {"hayabusa": None}          # explicit --hayabusa path, set by the CLI
+STATE = {"hayabusa": None, "chainsaw": None}          # explicit --hayabusa / --chainsaw paths, set by the CLI
+TRACES: dict = {}
+COMPARES: dict = {}
 
 
 def hayabusa_info() -> dict:
@@ -35,6 +50,101 @@ def hayabusa_info() -> dict:
         return {"found": False, "path": path, "error": str(e)}
 
 
+def chainsaw_info() -> dict:
+    path = CS.find_chainsaw(STATE["chainsaw"])
+    if not path:
+        return {"found": False}
+    try:
+        return {"found": True, **CS.probe(path)}
+    except R.HayabusaError as e:
+        return {"found": False, "path": path, "error": str(e)}
+
+
+def rule_index() -> RI.RuleIndex:
+    dirs = []
+    hb, cs = hayabusa_info(), chainsaw_info()
+    if hb.get("found"):
+        dirs.append(os.path.join(os.path.dirname(hb["path"]), "rules"))
+    if cs.get("found"):
+        dirs += [cs.get("sigma", ""), cs.get("rules", "")]
+    RL.ensure_starter()                                  # the library is never empty, even offline
+    dirs.append(RL.LIB)
+    return RI.get_index(dirs)
+
+
+def resolve_ai(spec, kind: str = "chat") -> dict:
+    """Turn what the page sent into a ready provider choice, enforcing consent for anything online."""
+    spec = spec if isinstance(spec, dict) else {}
+    prov, model = str(spec.get("provider", "")), str(spec.get("model", "")).strip()
+    if prov in ("", "none"):
+        raise LLM.LLMError("Choose an AI helper first.")
+    if prov == "auto":
+        rec = LLM.status()["recommend"]["explain"]
+        if not rec:
+            raise LLM.LLMError("No AI helper is set up yet. Install Ollama, log in to Claude Code, or add an API key in the AI box.")
+        prov, model = rec["provider"], model or rec["model"]
+    base = str(spec.get("base", ""))
+    if prov == "ollama" and not model:
+        loc = LLM.status()["local"]
+        names = loc["chat_models"] if kind == "chat" else loc["embed_models"]
+        model = names[0] if names else ""
+    if prov not in LLM.PROVIDERS and prov != "claude-code":
+        raise LLM.LLMError("Unknown AI helper.")
+    if spec.get("consent") is not True and not LLM.is_local(prov, base) and prov != "ollama":
+        raise LLM.LLMError("Tick the box to confirm the text may be sent to that online service, or choose a local model.")
+    return {"provider": prov, "key": str(spec.get("key", "")), "base": base, "model": model}
+
+
+def _run_investigate(job: dict, src: dict, body: dict) -> None:
+    try:
+        c = resolve_ai(body.get("ai"))
+        ds = src["dataset"]
+        steps_n = min(12, max(3, int(body.get("steps") or INV.DEFAULT_STEPS)))
+
+        def ask(prompt: str) -> str:
+            return LLM.chat(c["provider"], prompt, c["key"], c["base"], c["model"], max_tokens=700)
+
+        def progress(turn: int, total: int, msg: str) -> None:
+            job["phase"] = f"Step {turn} of {total}: {msg}"
+            job["progress"] = round(turn / total, 3)
+            job["log"].append(f"{turn}. {msg}")
+
+        job["phase"] = "Starting the investigation"
+        res = INV.investigate(ds.rows, ask, str(body.get("focus", "")), steps_n, progress)
+        emb = body.get("embed") if isinstance(body.get("embed"), dict) else {}
+        if str(emb.get("provider", "local")) == "local":
+            vecs, mode = None, "local"
+        else:
+            e = resolve_ai(emb, "embed")
+            job["phase"] = "Placing the steps in 3D"
+            vecs, mode = VC.from_dense(LLM.embed(e["provider"], [s["text"] for s in res["steps"]], e["key"], e["base"], e["model"])), f"{e['provider']} vectors"
+        an = VC.analyze(res["steps"], vecs, mode)
+        tid = secrets.token_hex(6)
+        if len(TRACES) > 8:
+            TRACES.pop(next(iter(TRACES)))
+        TRACES[tid] = an
+        label = "AI investigation of " + str(src.get("label") or ds.source or "results")
+        job["agent"] = dict(an, id=tid, label=label, report=res["report"], investigated=True, ai=f"{c['provider']}{' · ' + c['model'] if c['model'] else ''}", truncated=False)
+        job["state"] = "done"
+    except (LLM.LLMError, VC.TraceError) as e:
+        job.update(state="error", error=str(e))
+    except Exception as e:
+        job.update(state="error", error=f"Unexpected error: {type(e).__name__}: {e}")
+
+
+def enrich(ds: D.Dataset) -> None:
+    """Chainsaw does not report ATT&CK tags or rule files: fill them in from the Sigma rules on disk."""
+    ix = rule_index()
+    for r in ds.rows:
+        e = ix.find(title=r["title"])
+        if not e:
+            continue
+        tech, tac = RI.mitre_from_tags(e["tags"])
+        r["ruleid"], r["rulefile"] = e["id"], e["file"]
+        r["tags"], r["tactics"] = tech, tac
+        r["blob"] += " " + " ".join(tech + tac).lower()
+
+
 def _new_job() -> tuple[str, dict]:
     jid = secrets.token_hex(6)
     job = {"state": "running", "phase": "starting", "log": [], "t0": time.time()}
@@ -45,17 +155,20 @@ def _new_job() -> tuple[str, dict]:
     return jid, job
 
 
-def _run_scan(job: dict, target: str, min_level: str, noisy: bool) -> None:
+def _run_scan(job: dict, target: str, min_level: str, noisy: bool, json_input: bool = False, engine: str = "hayabusa") -> None:
     out = None
     try:
+        if engine == "chainsaw":
+            return _run_chainsaw(job, target, min_level)
         info = hayabusa_info()
         if not info.get("found"):
             raise R.HayabusaError("Hayabusa was not found. Install it, then start Hayabusa Lens with --hayabusa /path/to/hayabusa.")
         job["phase"] = f"Hayabusa {info['version']} is scanning"
-        out = R.scan(info, target, min_level, noisy, job["log"])
+        out = R.scan(info, target, min_level, noisy, job["log"], json_input)
         job["phase"] = "reading results"
         job["dataset"] = D.Dataset.load(out)
         job["dataset"].source = target
+        job["label"] = "Hayabusa: " + os.path.basename(target.rstrip("/\\"))
         job["state"] = "done"
     except (R.HayabusaError, D.LoadError) as e:
         job.update(state="error", error=str(e))
@@ -66,10 +179,92 @@ def _run_scan(job: dict, target: str, min_level: str, noisy: bool) -> None:
             os.unlink(out)
 
 
+def _run_chainsaw(job: dict, target: str, min_level: str) -> None:
+    out = None
+    try:
+        info = chainsaw_info()
+        if not info.get("found"):
+            raise R.HayabusaError("Chainsaw was not found. Press 'Download it for me' next to Chainsaw first, or start with --chainsaw PATH.")
+        job["phase"] = f"Chainsaw {info['version']} is hunting with Sigma rules"
+        out = CS.scan(info, target, job["log"])
+        job["phase"] = "reading results"
+        ds = D.Dataset.load(out) if os.path.getsize(out) else D.Dataset([], target)
+        floor = max(0, D.LEVEL_NAMES.index(min_level)) if min_level in D.LEVEL_NAMES else 0
+        if floor:
+            ds = D.Dataset([r for r in ds.rows if r["lvl"] >= floor], target, ds.skipped)
+        enrich(ds)
+        ds.source = target
+        job["dataset"], job["label"] = ds, "Chainsaw: " + os.path.basename(target.rstrip("/\\")) 
+        job["state"] = "done"
+    except (R.HayabusaError, D.LoadError) as e:
+        job.update(state="error", error=str(e))
+    except Exception as e:
+        job.update(state="error", error=f"Unexpected error: {e}")
+    finally:
+        if out and os.path.exists(out):
+            os.unlink(out)
+
+
+def _run_samples(job: dict) -> None:
+    try:
+        info = hayabusa_info()
+        if not info.get("found"):
+            raise R.HayabusaError("Hayabusa is needed to scan the sample logs. Press 'Download it for me' at the top first.")
+        def prog(done, total, name):
+            job["phase"] = f"Downloading sample logs ({done} of {total})"
+            job["progress"] = round(done / max(total, 1), 3)
+        folder = SM.download(progress=prog)
+        job["progress"] = 0
+        job["phase"] = f"Hayabusa {info['version']} is scanning the sample logs"
+        out = R.scan(info, folder, "informational", False, job["log"])
+        try:
+            job["phase"] = "reading results"
+            job["dataset"] = D.Dataset.load(out)
+            job["dataset"].source = "real sample logs (Hayabusa sample-evtx collection)"
+            job["label"] = "Hayabusa: real sample logs"
+        finally:
+            os.unlink(out)
+        job["state"] = "done"
+    except (R.HayabusaError, D.LoadError, SM.SamplesError) as e:
+        job.update(state="error", error=str(e))
+    except Exception as e:
+        job.update(state="error", error=f"Unexpected error: {e}")
+
+
+def _run_tool(job: dict, tool: str, path: str) -> None:
+    try:
+        info = hayabusa_info()
+        if not info.get("found"):
+            raise R.HayabusaError("Hayabusa was not found. Press 'Download it for me' at the top first.")
+        job["phase"] = f"Hayabusa {info['version']}: {TL.TOOLS.get(tool, {}).get('label', tool)}"
+        job["tables"] = TL.run_tool(info, tool, path, job["log"])
+        job["state"] = "done"
+    except (R.HayabusaError, OSError) as e:
+        job.update(state="error", error=str(e))
+    except Exception as e:
+        job.update(state="error", error=f"Unexpected error: {e}")
+
+
+def _run_search(job: dict, path: str, body: dict) -> None:
+    try:
+        info = hayabusa_info()
+        if not info.get("found"):
+            raise R.HayabusaError("Hayabusa was not found. Press 'Download it for me' at the top first.")
+        job["phase"] = f"Hayabusa {info['version']} is searching every event"
+        kws = [k for k in str(body.get("keywords", "")).split(",")]
+        job["tables"] = TL.run_search(info, path, kws, str(body.get("regex", "")), bool(body.get("all")), bool(body.get("ignoreCase", True)), job["log"])
+        job["state"] = "done"
+    except (R.HayabusaError, OSError) as e:
+        job.update(state="error", error=str(e))
+    except Exception as e:
+        job.update(state="error", error=f"Unexpected error: {e}")
+
+
 def _run_open(job: dict, path: str) -> None:
     try:
         job["phase"] = "reading results"
         job["dataset"] = D.Dataset.load(path)
+        job["label"] = "Opened: " + os.path.basename(path)
         job["state"] = "done"
     except FileNotFoundError:
         job.update(state="error", error=f"File not found: {path}")
@@ -176,13 +371,19 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/":
             self._send(200, PAGE.replace("__VERSION__", __version__).replace("__URL__", __url__).encode(), "text/html; charset=utf-8")
         elif p == "/api/hayabusa":
-            self._json(200, hayabusa_info())
+            self._json(200, {**hayabusa_info(), "chainsaw": chainsaw_info(), "samples_mb": round(SM.total_mb(), 1), "tool_info": {k: {"label": v["label"], "desc": v["desc"]} for k, v in TL.TOOLS.items()}})
         elif p == "/api/status":
             job = JOBS.get((q.get("job") or [""])[0])
             if not job:
                 return self._json(404, {"error": "unknown job"})
             out = {"state": job["state"], "progress": job.get("progress", 0), "phase": job.get("phase", ""), "log": job["log"][-6:], "error": job.get("error", ""), "elapsed": round(time.time() - job["t0"], 1)}
-            if job["state"] == "done":
+            if job.get("notice"):
+                out["notice"] = job["notice"]
+            if job["state"] == "done" and "agent" in job:
+                out["agent"] = job["agent"]
+            elif job["state"] == "done" and "tables" in job:
+                out["tables"] = job["tables"]
+            elif job["state"] == "done":
                 out["summary"] = job["dataset"].summary()
             self._json(200, out)
         elif p == "/api/query":
@@ -199,6 +400,36 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, ev)
         elif p == "/api/export":
             self._export(q)
+        elif p == "/api/rule":
+            self._rule(q)
+        elif p == "/api/rules":
+            self._rules(q)
+        elif p == "/api/rulelib":
+            self._json(200, RL.status())
+        elif p == "/api/netmap":
+            ds = self._dataset(q)
+            if ds is not None:
+                self._json(200, NM.build(ds.rows))
+        elif p == "/api/traces":
+            self._json(200, {"traces": VC.find_traces()})
+        elif p == "/api/llm/activity":
+            self._json(200, {"events": LLM.activity(float((q.get("since") or ["0"])[0] or 0))[-14:], "now": time.time()})
+        elif p == "/api/chain":
+            ds = self._dataset(q)
+            if ds is not None:
+                self._json(200, {"stages": AC.stages(ds.rows, 1), "total": len(ds.rows)})
+        elif p == "/api/localai":
+            self._json(200, LLM.local_status())
+        elif p == "/api/llm":
+            self._json(200, LLM.status())
+        elif p == "/api/share/download":
+            self._share_download(q)
+        elif p == "/api/rulefile":
+            self._rulefile(q)
+        elif p == "/api/jobs":
+            self._jobs()
+        elif p == "/api/compare":
+            self._compare(q)
         elif p == "/api/ls":
             self._ls((q.get("path") or [""])[0])
         else:
@@ -209,23 +440,53 @@ class Handler(BaseHTTPRequestHandler):
         if not self._guard(urllib.parse.parse_qs(u.query)):
             return
         n = int(self.headers.get("Content-Length") or 0)
-        if n > MAX_BODY or u.path not in ("/api/scan", "/api/open", "/api/demo", "/api/update-rules", "/api/install"):
+        if n > (MAX_UPLOAD if u.path == "/api/agent" else MAX_BODY) or u.path not in ("/api/scan", "/api/open", "/api/demo", "/api/update-rules", "/api/rulelib", "/api/localai", "/api/agent", "/api/agent/explain", "/api/llm/test", "/api/llm/key", "/api/investigate", "/api/explain/evtx", "/api/share", "/api/install", "/api/samples", "/api/tool", "/api/search"):
             return self._json(404, {"error": "bad request"})
         try:
             body = json.loads(self.rfile.read(n) or b"{}")
         except ValueError:
             return self._json(400, {"error": "bad JSON"})
+        if u.path in ("/api/agent", "/api/agent/explain"):
+            return self._agent(u.path, body)
+        if u.path == "/api/llm/test":
+            return self._llm_test(body)
+        if u.path == "/api/llm/key":
+            try:
+                LLM.set_key(str(body.get("provider", "")), str(body.get("key", "")))
+                return self._json(200, {"ok": True, "keys": LLM.status()["keys"]})
+            except LLM.LLMError as e:
+                return self._json(400, {"error": str(e)})
+        if u.path == "/api/explain/evtx":
+            return self._explain_evtx(body)
+        if u.path == "/api/share":
+            return self._share(body)
         jid, job = _new_job()
         if u.path == "/api/demo":
-            job["dataset"] = D.Dataset.from_dicts(D.demo_dicts(), "DEMO DATA (fictional)")
+            job["dataset"] = D.Dataset.from_dicts(D.demo_dicts(), "Demo data")
+            job["label"] = "Demo data"
             job["state"] = "done"
+        elif u.path == "/api/investigate":
+            ident = str(body.get("job", ""))
+            src = JOBS.get(ident)
+            if not src or src.get("state") != "done" or "dataset" not in src or not src["dataset"].rows:
+                JOBS.pop(jid, None)
+                return self._json(400, {"error": "Load some results first (scan logs, open results, or try the demo)."})
+            threading.Thread(target=_run_investigate, args=(job, src, body), daemon=True).start()
+        elif u.path == "/api/search":
+            path = os.path.abspath(os.path.expanduser(str(body.get("path", "")).strip().strip('"')))
+            threading.Thread(target=_run_search, args=(job, path, body), daemon=True).start()
+        elif u.path == "/api/tool":
+            path = os.path.abspath(os.path.expanduser(str(body.get("path", "")).strip().strip('"')))
+            threading.Thread(target=_run_tool, args=(job, str(body.get("tool", "")), path), daemon=True).start()
+        elif u.path == "/api/samples":
+            threading.Thread(target=_run_samples, args=(job,), daemon=True).start()
         elif u.path == "/api/install":
             def inst():
                 def prog(done, total, msg):
                     job["phase"] = msg.capitalize() + (f" ({done / 1048576:.0f} of {total / 1048576:.0f} MB)" if total and msg.startswith("down") else "")
                     job["progress"] = round(done / total, 3) if total else 0
                 try:
-                    path = I.install(progress=prog)
+                    path = (I.install_chainsaw if body.get("engine") == "chainsaw" else I.install)(progress=prog)
                     job.update(state="done", phase="installed: " + path)
                     job["dataset"] = D.Dataset([], "installed")
                 except I.InstallError as e:
@@ -233,6 +494,41 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as e:
                     job.update(state="error", error=f"Unexpected error: {e}")
             threading.Thread(target=inst, daemon=True).start()
+        elif u.path == "/api/localai":
+            def local_ai():
+                def prog(done, total, msg):
+                    job["phase"] = msg.capitalize() + (f" ({done / 1048576:.0f} of {total / 1048576:.0f} MB)" if total else "")
+                    job["progress"] = round(done / total, 3) if total else 0
+                try:
+                    if body.get("action") == "pull":
+                        LLM.start_ollama(job["log"])
+                        LLM.pull_model(str(body.get("model", "")), prog)
+                        job["notice"] = f"Model {body.get('model')} is ready. Choose Ollama in Connections."
+                    else:
+                        LLM.start_ollama(job["log"])
+                        job["notice"] = "Ollama is running."
+                    job.update(state="done")
+                    job["dataset"] = D.Dataset([], "localai")
+                except LLM.LLMError as e:
+                    job.update(state="error", error=str(e))
+                except Exception as e:
+                    job.update(state="error", error=f"Unexpected error: {e}")
+            threading.Thread(target=local_ai, daemon=True).start()
+        elif u.path == "/api/rulelib":
+            def get_rules():
+                def prog(done, total, msg):
+                    job["phase"] = msg.capitalize() + (f" ({done / 1048576:.1f} of {total / 1048576:.1f} MB)" if total and msg.startswith("down") else "")
+                    job["progress"] = round(done / total, 3) if total else 0
+                try:
+                    m = RL.update(str(body.get("set", "core")), str(body.get("mode", "auto")), progress=prog)
+                    RI.invalidate()
+                    job.update(state="done", phase=m.get("note") or ("rules ready: " + m["source"]), notice=m.get("note") or ("Rules ready: " + m["source"]))
+                    job["dataset"] = D.Dataset([], "rules")
+                except RL.RuleLibError as e:
+                    job.update(state="error", error=str(e))
+                except Exception as e:
+                    job.update(state="error", error=f"Unexpected error: {e}")
+            threading.Thread(target=get_rules, daemon=True).start()
         elif u.path == "/api/update-rules":
             def upd():
                 info = hayabusa_info()
@@ -240,6 +536,7 @@ class Handler(BaseHTTPRequestHandler):
                     return job.update(state="error", error="Hayabusa was not found.")
                 job["phase"] = "updating rules (needs internet)"
                 code = R.update_rules(info, job["log"])
+                RI.invalidate()
                 job.update(state="error" if code else "done", error="update-rules failed: " + " | ".join(job["log"][-2:]) if code else "")
                 job["dataset"] = D.Dataset([], "rules updated")
             threading.Thread(target=upd, daemon=True).start()
@@ -252,7 +549,7 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=_run_open, args=(job, path), daemon=True).start()
             else:
                 lvl = str(body.get("minLevel", "informational"))
-                threading.Thread(target=_run_scan, args=(job, path, lvl, bool(body.get("noisy"))), daemon=True).start()
+                threading.Thread(target=_run_scan, args=(job, path, lvl, bool(body.get("noisy")), bool(body.get("jsonInput")), str(body.get("engine", "hayabusa"))), daemon=True).start()
         self._json(200, {"job": jid})
 
     def _query(self, q: dict) -> None:
@@ -268,6 +565,193 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             off, lim = 0, 100
         self._json(200, {"total": len(rows), "rows": [D.compact(r) for r in rows[off:off + lim]], "facets": ds.facets(f), "counts": ds.counts(f), "timeline": ds.timeline(f), "summary": ds.summary()})
+
+    def _rule(self, q: dict) -> None:
+        ds = self._dataset(q)
+        if not ds:
+            return
+        try:
+            r = ds.rows[int((q.get("i") or ["-1"])[0])]
+        except (ValueError, IndexError):
+            return self._json(404, {"error": "no such event"})
+        ix = rule_index()
+        e = ix.find(r["ruleid"], r["rulefile"], r["title"])
+        if not e:
+            return self._json(200, {"found": False, "title": r["title"], "note": "The rule file for this detection was not found on this computer (the rules folder may be missing or a different version)."})
+        self._json(200, self._rule_payload(ix, e))
+
+    @staticmethod
+    def _rule_payload(ix, e: dict) -> dict:
+        tech, tac = RI.mitre_from_tags(e["tags"])
+        return {"found": True, "path": e["path"], "file": e["file"], "title": e["title"], "id": e["id"], "level": e["level"], "status": e["status"], "tags": e["tags"],
+                "techniques": {t: D.mitre_url(t) for t in tech}, "tactics": tac, "text": ix.read(e["path"])}
+
+    def _rules(self, q: dict) -> None:
+        ix = rule_index()
+        res = ix.search((q.get("q") or [""])[0][:100], 80)
+        self._json(200, {"total": len(ix.entries), "rules": res})
+
+    def _rulefile(self, q: dict) -> None:
+        ix = rule_index()
+        path = (q.get("path") or [""])[0]
+        e = ix.entries.get(path)
+        self._json(200, self._rule_payload(ix, e)) if e else self._json(404, {"error": "unknown rule"})
+
+    def _jobs(self) -> None:
+        out = []
+        for jid, job in list(JOBS.items()):
+            ds = job.get("dataset")
+            if job.get("state") == "done" and ds is not None and ds.rows:
+                out.append({"job": jid, "label": job.get("label") or ds.source or "results", "total": len(ds.rows), "when": time.strftime("%H:%M", time.localtime(job["t0"])), "levels": ds.summary()["levels"]})
+        self._json(200, {"jobs": out})
+
+    def _explain_evtx(self, body: dict) -> None:
+        """One-shot plain-English attack chain for the loaded results (or one computer/account/address)."""
+        try:
+            src = JOBS.get(str(body.get("job", "")))
+            if not src or src.get("state") != "done" or "dataset" not in src or not src["dataset"].rows:
+                raise LLM.LLMError("Load some results first.")
+            c = resolve_ai(body.get("ai"))
+            focus = str(body.get("focus", ""))
+            text = LLM.chat(c["provider"], AC.explain_prompt(src["dataset"].rows, focus), c["key"], c["base"], c["model"], max_tokens=700)
+            self._json(200, {"text": text, "ai": c["provider"] + (" · " + c["model"] if c["model"] else "")})
+        except LLM.LLMError as e:
+            self._json(400, {"error": str(e)})
+
+    def _llm_test(self, body: dict) -> None:
+        prov = str(body.get("provider", ""))
+        try:
+            if prov not in LLM.PROVIDERS and prov != "claude-code":
+                raise LLM.LLMError("Choose a service to test.")
+            if body.get("consent") is not True and not LLM.is_local(prov, str(body.get("base", ""))):
+                raise LLM.LLMError("Tick the box to confirm a tiny test message ('reply pong') may be sent to that service.")
+            self._json(200, LLM.test(prov, "embed" if body.get("kind") == "embed" else "chat", str(body.get("key", "")), str(body.get("base", "")), str(body.get("model", ""))))
+        except LLM.LLMError as e:
+            self._json(200, {"ok": False, "error": str(e)})
+
+    def _share_events(self, src: str, ident: str, min_level: int) -> tuple[list[dict], str]:
+        if src == "agent":
+            t = TRACES.get(ident)
+            if not t:
+                raise SH.ShareError("That agent analysis is no longer loaded. Run it again.")
+            return SH.agent_events(t, max(min_level, 0)), "agent"
+        job = JOBS.get(ident)
+        if not job or job.get("state") != "done" or "dataset" not in job:
+            raise SH.ShareError("Those results are no longer loaded. Run the scan again or open the file.")
+        return [SH.ecs_event(r) for r in SH.select(job["dataset"].rows, min_level)], "alerts"
+
+    def _share(self, body: dict) -> None:
+        try:
+            try:
+                lvl = min(4, max(0, int(body.get("minLevel", 2))))
+            except (TypeError, ValueError):
+                lvl = 2
+            events, kind = self._share_events(str(body.get("source", "alerts")), str(body.get("job") or body.get("id") or ""), lvl)
+            dest = body.get("dest") if isinstance(body.get("dest"), dict) else {}
+            out = {"count": len(events), "sample": events[:2], "kind": kind}
+            if body.get("action") != "send":
+                return self._json(200, out)
+            if body.get("confirm") is not True:
+                raise SH.ShareError("Tick the box to confirm you want to send these events.")
+            if not events:
+                raise SH.ShareError("Nothing to send at that minimum level.")
+            t = str(dest.get("type", ""))
+            if t == "file":
+                out.update(sent=len(events), path=SH.write_file(events, str(dest.get("path", ""))), message="Appended to the file. Point your SIEM agent at it.")
+            elif t == "syslog":
+                out.update(sent=SH.send_syslog(events, str(dest.get("host", "")).strip(), int(dest.get("port") or 514), str(dest.get("proto", "udp")), str(dest.get("fmt", "cef"))))
+            elif t in ("elastic", "splunk", "webhook"):
+                out["sent"] = SH.post(events, t, str(dest.get("url", "")), str(dest.get("auth", "")), str(dest.get("index") or "hayabusa-lens"))
+            else:
+                raise SH.ShareError("Choose where to send them.")
+            out.setdefault("message", f"Sent {out['sent']:,} event(s).")
+            self._json(200, out)
+        except SH.ShareError as e:
+            self._json(400, {"error": str(e)})
+        except (ValueError, OSError) as e:
+            self._json(400, {"error": f"Could not do that: {e}"})
+
+    def _share_download(self, q: dict) -> None:
+        try:
+            events, kind = self._share_events((q.get("source") or ["alerts"])[0], (q.get("job") or q.get("id") or [""])[0], int((q.get("minLevel") or ["2"])[0]))
+        except (SH.ShareError, ValueError) as e:
+            return self._json(400, {"error": str(e)})
+        if (q.get("fmt") or ["ndjson"])[0] == "cef":
+            data, name, ctype = "\n".join(SH.cef(e) for e in events) + "\n", f"hayabusa-lens-{kind}.cef", "text/plain; charset=utf-8"
+        else:
+            data, name, ctype = "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events), f"hayabusa-lens-{kind}.ndjson", "application/x-ndjson"
+        self._send(200, data.encode("utf-8"), ctype, {"Content-Disposition": f'attachment; filename="{name}"'})
+
+    def _agent(self, path: str, body: dict) -> None:
+        """Agent-trace analysis runs inside the request: local vectors take well under a second."""
+        def conn(spec) -> dict | None:
+            spec = spec if isinstance(spec, dict) else {}
+            prov = str(spec.get("provider", "local"))
+            if prov == "local":
+                return None
+            if spec.get("consent") is not True and not LLM.is_local(prov, str(spec.get("base", ""))):
+                raise LLM.LLMError("Tick the box to confirm you are happy for this trace text to be sent to that service.")
+            return {"provider": prov, "key": str(spec.get("key", "")), "base": str(spec.get("base", "")), "model": str(spec.get("model", ""))}
+        try:
+            if path == "/api/agent/explain":
+                t = TRACES.get(str(body.get("id", "")))
+                if not t:
+                    return self._json(404, {"error": "That analysis is no longer loaded. Run it again."})
+                c = conn(body)
+                if not c:
+                    return self._json(400, {"error": "Choose Claude, OpenAI or a compatible service to explain with."})
+                return self._json(200, {"text": LLM.explain(c["provider"], t["steps"], c["key"], c["base"], c["model"])})
+            if isinstance(body.get("text"), str) and body["text"].strip():
+                text, label = body["text"], str(body.get("name") or "Pasted trace")[:80]
+            else:
+                fp = os.path.abspath(os.path.expanduser(str(body.get("path", "")).strip().strip('"')))
+                if not os.path.isfile(fp):
+                    return self._json(400, {"error": "Pick a trace from the list, choose a file, drop one on the page, or try the demo trace."})
+                if os.path.getsize(fp) > 50 << 20:
+                    return self._json(400, {"error": "That file is over 50 MB. Trim the trace first."})
+                with open(fp, encoding="utf-8", errors="replace") as f:
+                    text, label = f.read(), os.path.basename(fp)
+            steps = VC.parse_trace(text)
+            c = conn(body.get("embed"))
+            if c:
+                vecs, mode = VC.from_dense(LLM.embed(c["provider"], [s["text"] for s in steps], c["key"], c["base"], c["model"])), f"{c['provider']} embeddings"
+            else:
+                vecs, mode = None, "local"
+            res = VC.analyze(steps, vecs, mode)
+        except (VC.TraceError, LLM.LLMError) as e:
+            return self._json(400, {"error": str(e)})
+        except OSError as e:
+            return self._json(400, {"error": f"Could not read that file: {e.strerror or e}"})
+        tid = secrets.token_hex(6)
+        if len(TRACES) > 8:
+            TRACES.pop(next(iter(TRACES)))
+        TRACES[tid] = res
+        res = dict(res, id=tid, label=label, truncated=res["n"] >= VC.MAX_STEPS)
+        res["steps"] = [dict(s, text=s["text"][:1500]) for s in res["steps"]]
+        self._json(200, res)
+
+    def _compare(self, q: dict) -> None:
+        ja, jb = JOBS.get((q.get("a") or [""])[0]), JOBS.get((q.get("b") or [""])[0])
+        if not ja or not jb or "dataset" not in ja or "dataset" not in jb:
+            return self._json(404, {"error": "Both results must still be loaded. Run the scans again or open the files."})
+        mode = "event" if (q.get("mode") or [""])[0] == "event" else "rule"
+        key = ((q.get("a") or [""])[0], (q.get("b") or [""])[0], mode)
+        if key not in COMPARES:
+            COMPARES.clear()
+            COMPARES[key] = CP.compare(ja["dataset"], jb["dataset"], mode)
+        c = COMPARES[key]
+        which = (q.get("which") or ["new"])[0]
+        rows = c["_gone"] if which == "gone" else c["_new"]
+        rows = sorted(rows, key=lambda r: (-r["lvl"], r["ts"]))
+        if (q.get("fmt") or [""])[0] == "csv":
+            return self._send(200, export_csv(rows).encode(), "text/csv; charset=utf-8", {"Content-Disposition": f'attachment; filename="hayabusa-lens-{which}.csv"'})
+        try:
+            off, lim = max(0, int((q.get("offset") or ["0"])[0])), min(500, max(1, int((q.get("limit") or ["100"])[0])))
+        except ValueError:
+            off, lim = 0, 100
+        out = {k: v for k, v in c.items() if not k.startswith("_")}
+        out.update(which=which, total=len(rows), rows=[D.compact(r) for r in rows[off:off + lim]])
+        self._json(200, out)
 
     def _export(self, q: dict) -> None:
         ds = self._dataset(q)
@@ -307,20 +791,27 @@ def make_server(port: int = 0) -> tuple[ThreadingHTTPServer, str]:
     return ThreadingHTTPServer(("127.0.0.1", port), type("Bound", (Handler,), {"token": token})), token
 
 
-def serve(port: int = 0, open_browser: bool = True, path: str | None = None, demo: bool = False) -> int:
+def serve(port: int = 0, open_browser: bool = True, path: str | None = None, demo: bool = False, samples: bool = False, agent: str | None = None, ai_start: bool = True) -> int:
     httpd, token = make_server(port)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/?token={token}"
-    if demo:
+    if samples:
+        url += "&samples=1"
+    elif demo:
         url += "&demo=1"
+    elif agent:
+        url += "&agentpath=" + urllib.parse.quote(os.path.abspath(agent))
     elif path:
         url += "&path=" + urllib.parse.quote(os.path.abspath(path))
     print(f"Hayabusa Lens {__version__} by {__author__}\n  {url}\nListening on this computer only. Press Ctrl+C to stop.", flush=True)
     if open_browser:
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()
+    if ai_start:
+        threading.Thread(target=LLM.autostart, daemon=True).start()          # bring a local model up so the AI buttons are ready
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
         httpd.server_close()
+        LLM.stop_started()
     return 0

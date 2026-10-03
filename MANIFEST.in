@@ -1,3 +1,4 @@
 include README.md LICENSE* CITATION.cff
 recursive-include tests *.py
 recursive-include docs *.png
+recursive-include hayabusa_lens/starter *.yml

@@ -50,27 +50,32 @@ def probe(path: str) -> dict:
         raise HayabusaError(f"Could not run Hayabusa: {e}") from e
     text = ANSI.sub("", out.stdout + out.stderr)
     m = re.search(r"Hayabusa v([\d.]+)(?: - ([^\n]+))?", text)
-    style = "dfir" if "dfir-timeline" in text else "legacy" if "json-timeline" in text else None
+    style = "dfir" if "dfir-timeline" in text else "legacy" if "json-timeline" in text else "csv" if "csv-timeline" in text else None
+    from .tools import available
     return {"path": path, "version": m.group(1) if m else "unknown", "release": (m.group(2) if m else "") or "", "style": style,
-            "rules": os.path.isdir(os.path.join(os.path.dirname(path), "rules"))}
+            "rules": os.path.isdir(os.path.join(os.path.dirname(path), "rules")), "tools": available(text)}
 
 
-def build_command(info: dict, target: str, out_file: str, min_level: str = "informational", noisy: bool = False) -> list[str]:
+def build_command(info: dict, target: str, out_file: str, min_level: str = "informational", noisy: bool = False, json_input: bool = False) -> list[str]:
     if info["style"] is None:
-        raise HayabusaError("This Hayabusa version has no timeline command Hayabusa Lens understands. Try Hayabusa 2.x or newer.")
+        raise HayabusaError("This Hayabusa version has no timeline command Hayabusa Lens understands (dfir-timeline, json-timeline or csv-timeline).")
     if not os.path.isabs(target) or not os.path.exists(target):
         raise HayabusaError(f"Path not found: {target}")
     flag = "-d" if os.path.isdir(target) else "-f"
     cmd = [info["path"]]
     if info["style"] == "dfir":
         cmd += ["dfir-timeline", flag, target, "-t", "jsonl"]
-    else:
+    elif info["style"] == "legacy":
         cmd += ["json-timeline", flag, target, "-L"]
-    cmd += ["-o", out_file, "-w", "-q", "-N", "-C", "-K", "-p", "verbose", "-O"]
+    else:                                              # very old versions: CSV only (the loader reads CSV too)
+        cmd += ["csv-timeline", flag, target]
+    cmd += ["-o", out_file, "-w", "-q", "-N", "-C", "-K", "-p", "verbose"] + (["-U"] if info["style"] == "csv" else ["-O"])
     if min_level in ("low", "medium", "high", "critical"):
         cmd += ["-m", min_level]
     if noisy:
         cmd += ["-n"]
+    if json_input and info["style"] != "csv":
+        cmd += ["-J"]                    # Hayabusa's JSON-input mode. Not exposed in the interface: it produced no detections on evtx_dump-style JSON in testing
     return cmd
 
 
@@ -94,15 +99,16 @@ def run(cmd: list[str], cwd: str, log: list[str], cancel: threading.Event | None
         if cancel is not None and cancel.is_set():
             proc.kill()
             break
+    proc.stdout.close()
     return proc.wait()
 
 
-def scan(info: dict, target: str, min_level: str, noisy: bool, log: list[str]) -> str:
+def scan(info: dict, target: str, min_level: str, noisy: bool, log: list[str], json_input: bool = False) -> str:
     """Run a scan and return the path of the JSONL file (the caller deletes it)."""
-    fd, out = tempfile.mkstemp(prefix="hayabusa-lens-", suffix=".jsonl")
+    fd, out = tempfile.mkstemp(prefix="hayabusa-lens-", suffix=".csv" if info["style"] == "csv" else ".jsonl")
     os.close(fd)
     os.unlink(out)                       # Hayabusa creates it; -C lets it overwrite, but start clean
-    code = run(build_command(info, target, out, min_level, noisy), os.path.dirname(info["path"]), log)
+    code = run(build_command(info, target, out, min_level, noisy, json_input), os.path.dirname(info["path"]), log)
     if not os.path.exists(out):
         tail = " | ".join(log[-3:]) or f"exit code {code}"
         raise HayabusaError(f"Hayabusa produced no results ({tail})")

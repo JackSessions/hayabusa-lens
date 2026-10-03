@@ -98,3 +98,67 @@ def install(dest_root: str | None = None, progress=None, api_url: str = API, ope
                 say(done, total, "done")
                 return p
     raise InstallError("Unpacked the archive but could not find the hayabusa program inside it.")
+
+
+CHAINSAW_API = "https://api.github.com/repos/WithSecureOpenSource/chainsaw/releases/latest"
+CHAINSAW_TRIPLES = {"lin-x64": "x86_64-unknown-linux-gnu", "lin-aarch64": "aarch64-unknown-linux-gnu", "mac-x64": "x86_64-apple-darwin", "mac-aarch64": "aarch64-apple-darwin", "win-x64": "x86_64-pc-windows-msvc"}
+
+
+def chainsaw_triple(system: str | None = None, machine: str | None = None) -> str:
+    key = platform_key(system, machine)
+    if key not in CHAINSAW_TRIPLES:
+        raise InstallError(f"Chainsaw has no official build for {key}. Download it by hand from https://github.com/WithSecureOpenSource/chainsaw/releases")
+    return CHAINSAW_TRIPLES[key]
+
+
+def install_chainsaw(dest_root: str | None = None, progress=None, api_url: str = CHAINSAW_API, opener=urllib.request.urlopen, system: str | None = None, machine: str | None = None) -> str:
+    """Download Chainsaw (with its Sigma rules, Chainsaw rules and mappings, one 36 MB archive) and return the path of the program for this computer."""
+    say = progress or (lambda *a: None)
+    triple = chainsaw_triple(system, machine)
+    headers = {"User-Agent": "hayabusa-lens", "Accept": "application/vnd.github+json"}
+    say(0, 0, "looking up the latest Chainsaw release")
+    try:
+        with opener(urllib.request.Request(api_url, headers=headers), timeout=30) as r:
+            release = json.load(r)
+    except Exception as e:
+        raise InstallError(f"Could not reach GitHub ({e}). Check your internet connection.") from e
+    asset = next((a for a in release.get("assets", []) if a["name"] == "chainsaw_all_platforms+rules.zip"), None)
+    if not asset:
+        raise InstallError("This Chainsaw release has no 'all platforms + rules' archive.")
+    dest = os.path.join(dest_root or HOME, f"chainsaw-{release.get('tag_name', 'latest').lstrip('v')}")
+    os.makedirs(dest, exist_ok=True)
+    fd, zpath = tempfile.mkstemp(suffix=".zip")
+    os.close(fd)
+    try:
+        sha, done, total = hashlib.sha256(), 0, int(asset.get("size") or 0)
+        say(0, total, f"downloading {asset['name']}")
+        with opener(urllib.request.Request(asset["browser_download_url"], headers=headers), timeout=60) as r, open(zpath, "wb") as out:
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                out.write(chunk)
+                sha.update(chunk)
+                done += len(chunk)
+                say(done, total, f"downloading {asset['name']}")
+        expected = str(asset.get("digest") or "")
+        if expected.startswith("sha256:") and expected[7:].lower() != sha.hexdigest():
+            raise InstallError("The download does not match the checksum GitHub published for it. Not installing it.")
+        say(done, total, "unpacking")
+        with zipfile.ZipFile(zpath) as zf:
+            safe_extract(zf, dest)
+    except zipfile.BadZipFile as e:
+        raise InstallError("The downloaded file was not a valid zip archive.") from e
+    except OSError as e:
+        raise InstallError(f"Could not download or unpack Chainsaw: {e}") from e
+    finally:
+        if os.path.exists(zpath):
+            os.unlink(zpath)
+    for dirpath, _, files in os.walk(dest):
+        for f in files:
+            if f == f"chainsaw_{triple}" or f == f"chainsaw_{triple}.exe":
+                p = os.path.join(dirpath, f)
+                os.chmod(p, os.stat(p).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+                say(done, total, "done")
+                return p
+    raise InstallError("Unpacked the archive but could not find the Chainsaw program for this computer inside it.")

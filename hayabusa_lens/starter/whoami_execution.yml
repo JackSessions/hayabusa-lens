@@ -1,0 +1,19 @@
+title: Whoami Execution
+id: 5fead543-8932-558d-99cf-406494a081d9
+status: example
+description: Hayabusa Lens starter rule (an original, simplified example): whoami is often one of the first commands an attacker runs on a new host.
+author: Hayabusa Lens
+date: 2026-10-03
+tags:
+  - attack.discovery
+  - attack.t1033
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\whoami.exe'
+  condition: selection
+falsepositives:
+  - Legitimate administration
+level: low

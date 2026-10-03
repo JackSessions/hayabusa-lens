@@ -1,0 +1,19 @@
+title: System Event Log Cleared
+id: b0b4569f-30e7-536f-8d15-986327d6751e
+status: example
+description: Hayabusa Lens starter rule (an original, simplified example): windows event 104 means a log such as System was cleared.
+author: Hayabusa Lens
+date: 2026-10-03
+tags:
+  - attack.defense_evasion
+  - attack.t1070.001
+logsource:
+  product: windows
+  service: system
+detection:
+  selection:
+    EventID: 104
+  condition: selection
+falsepositives:
+  - Legitimate administration
+level: medium

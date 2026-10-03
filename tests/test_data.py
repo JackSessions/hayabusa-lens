@@ -80,10 +80,10 @@ class DataTests(unittest.TestCase):
         self.assertEqual(D.mitre_url("attack.t1055"), "https://attack.mitre.org/techniques/T1055/")
         self.assertIsNone(D.mitre_url("sysmon"))
 
-    def test_demo_data_is_deterministic_and_labelled(self):
+    def test_demo_data_is_deterministic_and_clearly_made_up(self):
         a, b = D.demo_dicts(), D.demo_dicts()
         self.assertEqual([x["RuleID"] for x in a], [x["RuleID"] for x in b])
-        self.assertTrue(all("DEMO" in x["Details"]["Note"] for x in a))
+        self.assertTrue(all(x["RuleID"].startswith("demo-") and x["Computer"].startswith("DEMO-") for x in a))
 
 
 if __name__ == "__main__":
