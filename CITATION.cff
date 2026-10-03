@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use Hayabusa Lens, please credit it as below."
+title: "Hayabusa Lens: an unofficial front end for Hayabusa"
+type: software
+authors:
+  - name: "Jack Sessions"
+repository-code: "https://github.com/JackSessions/hayabusa-lens"
+license: MIT
+version: 0.1.0
+date-released: 2026-10-03

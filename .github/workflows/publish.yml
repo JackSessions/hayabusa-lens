@@ -1,0 +1,49 @@
+name: publish
+# Publishes to PyPI when you create a GitHub Release. Uses PyPI "trusted publishing", so no API token is stored.
+# One-time setup on pypi.org: Account -> Publishing -> add a pending publisher:
+#   project hayabusa-lens, owner JackSessions, repository hayabusa-lens, workflow publish.yml, environment pypi.
+on:
+  release:
+    types: [published]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+  pyz:
+    # Attach a single-file build (works on Windows, macOS and Linux with just Python) to the release.
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/make_pyz.py
+      - run: gh release upload "${{ github.event.release.tag_name }}" dist/hayabusa-lens.pyz --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

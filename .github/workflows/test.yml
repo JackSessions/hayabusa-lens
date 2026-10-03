@@ -1,0 +1,38 @@
+name: tests
+on: [push, pull_request]
+jobs:
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.9", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m unittest discover -s tests -v
+  real-hayabusa:
+    # Runs the real Hayabusa on real sample logs, so a Hayabusa release that changes its output breaks this build first.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download Hayabusa
+        run: |
+          mkdir hb && cd hb
+          curl -sL -o hb.zip https://github.com/Yamato-Security/hayabusa/releases/download/v4.1.0/hayabusa-4.1.0-lin-x64-musl.zip
+          unzip -q hb.zip && rm hb.zip && chmod +x hayabusa-*
+      - name: Get a few sample logs
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/Yamato-Security/hayabusa-sample-evtx samples
+          cd samples && git sparse-checkout set EVTX-ATTACK-SAMPLES/Persistence
+      - name: Integration test
+        env:
+          HAYABUSA_PATH: ${{ github.workspace }}/hb
+          HAYABUSA_SAMPLES: ${{ github.workspace }}/samples/EVTX-ATTACK-SAMPLES/Persistence
+        run: python -m unittest tests.test_integration -v
